@@ -31,15 +31,76 @@ from app.models.discovery import DiscoveredUser, DiscoveryJob, UserContent
 logger = logging.getLogger(__name__)
 
 
-def _get_provider() -> BaseDiscoveryProvider:
+def _build_provider_registry() -> list[BaseDiscoveryProvider]:
     """
-    Return the appropriate discovery provider.
+    Return all available real providers in priority order.
+
+    Phase B1: only RedditProvider.
+    Phase B2: add YouTubeProvider, ForumProvider here.
+    Each provider declares supported_categories and supported_regions;
+    _select_provider() uses those to pick the best match for a product.
+    """
+    if settings.use_mock_discovery():
+        return []   # no real providers available
+    from app.ml.discovery.reddit_provider import RedditProvider
+    return [RedditProvider()]
+
+
+def _select_provider(
+    registry: list[BaseDiscoveryProvider],
+    product_category: str,
+    product_region: str,
+) -> BaseDiscoveryProvider | None:
+    """
+    Pick the highest-priority provider that supports the product's category
+    and region.  Returns None if no real provider matches (triggers mock).
+
+    Selection rules:
+      1. Exact category match beats wildcard match.
+      2. Exact region match beats wildcard match.
+      3. Among equally-ranked providers, first in registry wins.
+    """
+    cat = (product_category or "").lower()
+    region = (product_region or "").lower()
+
+    exact: list[BaseDiscoveryProvider] = []
+    wildcard: list[BaseDiscoveryProvider] = []
+
+    for p in registry:
+        cats = [c.lower() for c in p.supported_categories]
+        regions = [r.lower() for r in p.supported_regions]
+
+        cat_match = cat in cats or "*" in cats
+        region_match = region in regions or "*" in regions
+
+        if not (cat_match and region_match):
+            continue
+
+        if cat in cats and region in regions:
+            exact.append(p)
+        else:
+            wildcard.append(p)
+
+    if exact:
+        return exact[0]
+    if wildcard:
+        return wildcard[0]
+    return None
+
+
+def _get_provider(
+    product_category: str = "",
+    product_region: str = "",
+) -> BaseDiscoveryProvider:
+    """
+    Return the appropriate discovery provider for a given product.
 
     Uses MockDiscoveryProvider when:
       - MOCK_DISCOVERY=True in .env
-      - Reddit credentials are absent (REDDIT_CLIENT_ID / SECRET not set)
+      - Reddit credentials are absent
+      - No registered provider supports the product's category/region
 
-    Uses RedditProvider when credentials are fully configured.
+    Uses the best-matching real provider otherwise.
     """
     if settings.use_mock_discovery():
         logger.info(
@@ -49,11 +110,24 @@ def _get_provider() -> BaseDiscoveryProvider:
             settings.MOCK_DISCOVERY,
         )
         from app.ml.discovery.mock_provider import MockDiscoveryProvider
-        return MockDiscoveryProvider(delay_ms=0)  # no delay in production path
+        return MockDiscoveryProvider(delay_ms=0)
 
-    logger.info("DiscoveryOrchestrator: using RedditProvider")
-    from app.ml.discovery.reddit_provider import RedditProvider
-    return RedditProvider()
+    registry = _build_provider_registry()
+    provider = _select_provider(registry, product_category, product_region)
+
+    if provider is None:
+        logger.warning(
+            "No real provider found for category=%r region=%r — falling back to mock",
+            product_category, product_region,
+        )
+        from app.ml.discovery.mock_provider import MockDiscoveryProvider
+        return MockDiscoveryProvider(delay_ms=0)
+
+    logger.info(
+        "DiscoveryOrchestrator: selected provider=%s for category=%r region=%r",
+        provider.name, product_category, product_region,
+    )
+    return provider
 
 
 class DiscoveryOrchestrator:
@@ -120,7 +194,10 @@ class DiscoveryOrchestrator:
             )
 
             # ── 3. Select provider + discover ─────────────────────────────────
-            provider = _get_provider()
+            provider = _get_provider(
+                product_category=product.category or "",
+                product_region=product.target_country or "",
+            )
             job.provider_name = provider.name
             job.sources = [provider.platform]
             await db.commit()

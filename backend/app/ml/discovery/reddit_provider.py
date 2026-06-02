@@ -121,16 +121,20 @@ class RedditProvider(BaseDiscoveryProvider):
 
     async def health_check(self) -> dict:
         try:
-            # Cheap API call to verify credentials work
             import asyncio
-            loop = asyncio.get_event_loop()
-            limits = await loop.run_in_executor(
-                None, lambda: self._reddit.auth.limits
+            loop = asyncio.get_running_loop()
+            # Make a real, cheap API request to verify the credentials actually work.
+            # Fetching a subreddit title is the lightest possible Reddit API call.
+            # self._reddit.auth.limits only reads an in-memory dict and does NOT
+            # contact Reddit, so it would return "ok" even with wrong credentials.
+            title = await loop.run_in_executor(
+                None,
+                lambda: self._reddit.subreddit("redditdev").title,
             )
             return {
                 "ok": True,
                 "provider": self.name,
-                "detail": f"Reddit API responsive, rate limits: {limits}",
+                "detail": f"Reddit API verified via r/redditdev (title={title!r})",
             }
         except Exception as exc:
             return {
@@ -167,12 +171,25 @@ class RedditProvider(BaseDiscoveryProvider):
 
         seen_usernames: set[str] = set()
         result: list[RawDiscoveredUser] = []
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
-        for sub_name in all_subs:
+        # Interleave keywords so each subreddit sees a varied sample.
+        # E.g. for 30 keywords and 10 subreddits, sub[0] gets kw[0,10,20],
+        # sub[1] gets kw[1,11,21] — ensuring LLM-generated keywords are used,
+        # not just the first 3 product-level keywords.
+        MAX_KW_PER_SUB = 3
+        n_subs = len(all_subs)
+
+        for sub_idx, sub_name in enumerate(all_subs):
             if len(result) >= max_users:
                 break
-            for kw in keywords[:3]:   # cap keywords per subreddit to limit API calls
+            # Pick keywords at stride intervals so coverage is spread evenly
+            sub_keywords = [
+                keywords[i]
+                for i in range(sub_idx, len(keywords), max(n_subs, 1))
+            ][:MAX_KW_PER_SUB] or keywords[:MAX_KW_PER_SUB]
+
+            for kw in sub_keywords:
                 if len(result) >= max_users:
                     break
                 try:
@@ -285,7 +302,7 @@ class RedditProvider(BaseDiscoveryProvider):
         max_items default = settings.DISCOVERY_CONTENT_PER_USER (15).
         """
         import asyncio
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         items: list[ContentItem] = []
 
         # Bio first
