@@ -143,13 +143,76 @@ tr:hover td{background:#f8fafc}
 
         <!-- Tabs -->
         <div class="card overflow-hidden">
-          <div class="border-b border-slate-200 px-5 flex gap-6">
-            <button id="tab-leads-btn" onclick="switchTab('leads')" class="py-3.5 text-sm tab-active">Leads</button>
-            <button id="tab-analytics-btn" onclick="switchTab('analytics')" class="py-3.5 text-sm tab-inactive">Analytics</button>
+          <div class="border-b border-slate-200 px-5 flex gap-0 overflow-x-auto">
+            <button id="tab-overview-btn"    onclick="switchTab('overview')"    class="py-3.5 px-4 text-sm whitespace-nowrap tab-active">Overview</button>
+            <button id="tab-motivations-btn" onclick="switchTab('motivations')" class="py-3.5 px-4 text-sm whitespace-nowrap tab-inactive">AI Motivations</button>
+            <button id="tab-users-btn"       onclick="switchTab('users')"       class="py-3.5 px-4 text-sm whitespace-nowrap tab-inactive">Discovered Users</button>
+            <button id="tab-leads-btn"       onclick="switchTab('leads')"       class="py-3.5 px-4 text-sm whitespace-nowrap tab-inactive">Lead Ranking</button>
+            <button id="tab-analytics-btn"   onclick="switchTab('analytics')"   class="py-3.5 px-4 text-sm whitespace-nowrap tab-inactive">Analytics</button>
+          </div>
+
+          <!-- ── Overview Tab ── -->
+          <div id="tab-overview" class="p-5">
+            <div id="ov-stats" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5"></div>
+            <div class="bg-slate-50 rounded-xl p-5">
+              <h4 class="text-sm font-semibold text-slate-700 mb-4">Pipeline — Stage by Stage</h4>
+              <div id="ov-ladder" class="space-y-0"></div>
+            </div>
+          </div>
+
+          <!-- ── Motivations Tab ── -->
+          <div id="tab-motivations" class="hidden p-5">
+            <div id="motiv-loading" class="text-center py-10">
+              <svg class="w-7 h-7 text-indigo-400 mx-auto mb-2 spin" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+              <p class="text-sm text-slate-500">Loading motivations...</p>
+            </div>
+            <div id="motiv-empty" class="hidden text-center py-10">
+              <p class="text-slate-500">No motivation categories found.</p>
+              <p class="text-xs text-slate-400 mt-1">Motivations are generated when you submit a product.</p>
+            </div>
+            <div id="motiv-content" class="hidden space-y-4"></div>
+          </div>
+
+          <!-- ── Discovered Users Tab ── -->
+          <div id="tab-users" class="hidden">
+            <div class="px-5 py-3 border-b border-slate-100 bg-slate-50 flex items-center gap-3 flex-wrap">
+              <input id="users-search" type="text" placeholder="Search username or location..."
+                class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs w-56 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                oninput="filterUsersLocal()"/>
+              <div class="flex gap-2 ml-auto items-center">
+                <span id="users-count" class="text-xs text-slate-500"></span>
+                <select id="users-platform-filter" onchange="loadUsers()" class="px-2 py-1.5 border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                  <option value="">All Platforms</option>
+                  <option value="reddit">Reddit</option>
+                  <option value="instagram">Instagram</option>
+                  <option value="twitter">Twitter</option>
+                </select>
+              </div>
+            </div>
+            <div id="users-loading" class="text-center py-12">
+              <svg class="w-8 h-8 text-indigo-400 mx-auto mb-2 spin" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+              <p class="text-sm text-slate-500">Loading users...</p>
+            </div>
+            <div id="users-empty" class="hidden text-center py-12">
+              <svg class="w-10 h-10 text-slate-300 mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0"/></svg>
+              <p class="text-slate-500">No users discovered yet.</p>
+              <p class="text-xs text-slate-400 mt-1">Run discovery first from Swagger UI or the API.</p>
+            </div>
+            <div id="users-grid" class="hidden p-5 grid grid-cols-1 md:grid-cols-2 gap-3"></div>
+            <div id="users-pagination" class="hidden px-5 py-3 border-t border-slate-100 flex items-center justify-between text-sm">
+              <span id="users-page-info" class="text-xs text-slate-500"></span>
+              <div class="flex gap-2">
+                <button id="users-btn-prev" onclick="changeUsersPage(-1)" disabled
+                  class="px-3 py-1.5 border border-slate-300 rounded text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">← Prev</button>
+                <span id="users-page-indicator" class="px-3 py-1.5 text-xs text-slate-700 font-medium"></span>
+                <button id="users-btn-next" onclick="changeUsersPage(1)" disabled
+                  class="px-3 py-1.5 border border-slate-300 rounded text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">Next →</button>
+              </div>
+            </div>
           </div>
 
           <!-- Leads Tab -->
-          <div id="tab-leads">
+          <div id="tab-leads" class="hidden">
             <!-- Filters -->
             <div class="px-5 py-4 border-b border-slate-100 flex items-center gap-4 flex-wrap bg-slate-50">
               <div class="flex items-center gap-2">
@@ -263,6 +326,27 @@ tr:hover td{background:#f8fafc}
   </div>
 </div>
 
+<!-- ═══════════════════════════════════════════ USER DETAIL MODAL ═══ -->
+<div id="modal-user" class="hidden fixed inset-0 z-50 flex items-start justify-end">
+  <div class="modal-overlay absolute inset-0" onclick="closeUserModal()"></div>
+  <div class="relative w-full max-w-xl bg-white h-full shadow-2xl overflow-y-auto fade-in">
+    <div class="sticky top-0 bg-white border-b border-slate-200 px-5 py-4 flex items-center justify-between z-10">
+      <div>
+        <h3 id="umodal-username" class="font-bold text-slate-900 text-lg"></h3>
+        <div class="flex items-center gap-2 mt-1 flex-wrap" id="umodal-meta"></div>
+      </div>
+      <button onclick="closeUserModal()" class="text-slate-400 hover:text-slate-700 p-1 rounded-lg hover:bg-slate-100">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div id="umodal-loading" class="p-8 text-center">
+      <svg class="w-7 h-7 text-indigo-400 mx-auto mb-2 spin" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+      <p class="text-sm text-slate-500">Loading user details...</p>
+    </div>
+    <div class="p-5 space-y-5 hidden" id="umodal-body"></div>
+  </div>
+</div>
+
 <!-- ═══════════════════════════════════════════ JAVASCRIPT ═══ -->
 <script>
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -275,6 +359,11 @@ const S = {
   leadsTotalPages: 1,
   leadsFilters: { min_score: 0, min_confidence: 0, sort: 'top' },
   analytics: null,
+  // new tabs
+  usersPage: 1,
+  usersTotalPages: 1,
+  usersAllRows: [],   // for local search filter
+  motivations: null,
 };
 
 const BASE = '/api/v1';
@@ -448,8 +537,11 @@ async function renderProductCard(p) {
 async function showProduct(productId) {
   S.currentProductId = productId;
   S.leadsPage = 1;
+  S.usersPage = 1;
+  S.motivations = null;
+  S.analytics = null;
   showView('product');
-  switchTab('leads');
+  switchTab('overview');
   const p = S.products.find(x => x.id === productId) || await apiGet(`/products/${productId}`);
   renderProductHeader(p);
   renderPipeline(p);
@@ -502,14 +594,19 @@ async function triggerMatching() {
   } catch(e) { showToast('Error: ' + e.message, true); }
 }
 
-// ── Leads Table ────────────────────────────────────────────────────────────────
+// ── Tabs ───────────────────────────────────────────────────────────────────────
+const ALL_TABS = ['overview','motivations','users','leads','analytics'];
 function switchTab(tab) {
-  const isLeads = tab === 'leads';
-  document.getElementById('tab-leads').classList.toggle('hidden', !isLeads);
-  document.getElementById('tab-analytics').classList.toggle('hidden', isLeads);
-  document.getElementById('tab-leads-btn').className = `py-3.5 text-sm ${isLeads?'tab-active':'tab-inactive'}`;
-  document.getElementById('tab-analytics-btn').className = `py-3.5 text-sm ${isLeads?'tab-inactive':'tab-active'}`;
-  if (!isLeads && !S.analytics) loadAnalytics();
+  ALL_TABS.forEach(t => {
+    document.getElementById(`tab-${t}`)?.classList.toggle('hidden', t !== tab);
+    const btn = document.getElementById(`tab-${t}-btn`);
+    if (btn) btn.className = `py-3.5 px-4 text-sm whitespace-nowrap ${t === tab ? 'tab-active' : 'tab-inactive'}`;
+  });
+  if (tab === 'overview')    loadOverview();
+  if (tab === 'motivations' && !S.motivations) loadMotivations();
+  if (tab === 'users')       loadUsers();
+  if (tab === 'leads')       loadLeads();
+  if (tab === 'analytics' && !S.analytics) loadAnalytics();
 }
 function applyFilters() {
   S.leadsFilters.min_score = Number(document.getElementById('filter-min-score').value) || 0;
@@ -720,6 +817,332 @@ function renderLeadModal(d) {
       </div>
     </section>`;
 }
+
+// ── Overview Tab ──────────────────────────────────────────────────────────────
+async function loadOverview() {
+  if (!S.currentProductId) return;
+  document.getElementById('ov-stats').innerHTML = '<p class="col-span-4 text-xs text-slate-400 text-center py-2">Loading...</p>';
+  document.getElementById('ov-ladder').innerHTML = '';
+
+  const [nlpR, oceanR, matchR, sumR, motivR] = await Promise.allSettled([
+    apiGet(`/products/${S.currentProductId}/nlp/status`),
+    apiGet(`/products/${S.currentProductId}/ocean/status`),
+    apiGet(`/products/${S.currentProductId}/match/status`),
+    apiGet(`/products/${S.currentProductId}/leads/summary`),
+    apiGet(`/products/${S.currentProductId}/motivations`),
+  ]);
+  const nlp   = nlpR.status   === 'fulfilled' ? nlpR.value   : null;
+  const ocean = oceanR.status === 'fulfilled' ? oceanR.value : null;
+  const match = matchR.status === 'fulfilled' ? matchR.value : null;
+  const sum   = sumR.status   === 'fulfilled' ? sumR.value   : null;
+  const motiv = motivR.status === 'fulfilled' ? motivR.value : null;
+
+  // Stat cards
+  document.getElementById('ov-stats').innerHTML = [
+    _ovCard('🔍', nlp?.total_users ?? '—', 'Users Discovered', ''),
+    _ovCard('📊', nlp ? `${nlp.nlp_processed} / ${nlp.total_users}` : '—', 'NLP Processed', nlp ? `${nlp.progress_pct.toFixed(0)}% complete` : ''),
+    _ovCard('🧠', ocean ? `${ocean.ocean_scored} / ${ocean.total_users}` : '—', 'OCEAN Scored', ocean ? `${ocean.progress_pct.toFixed(0)}% complete` : ''),
+    _ovCard('🏆', sum?.total_ranked ?? '—', 'Leads Ranked', sum?.avg_score ? `avg score ${sum.avg_score}` : sum?.total_ranked === 0 ? 'none yet' : ''),
+  ].join('');
+
+  // Pipeline ladder
+  const motivCount = motiv?.total ?? 0;
+  const usersCount = nlp?.total_users ?? 0;
+  const nlpDone    = nlp?.nlp_processed ?? 0;
+  const oceanDone  = ocean?.ocean_scored ?? 0;
+  const ranked     = sum?.total_ranked ?? 0;
+  const topCat     = sum?.top_category ?? null;
+
+  const ladderSteps = [
+    { icon:'💡', label:'AI Motivations',   detail: motivCount ? `${motivCount} motivation categories generated` : 'not generated yet',       done: motivCount > 0 },
+    { icon:'🔍', label:'Discovery',         detail: usersCount ? `${usersCount} users discovered` : 'no users discovered yet',               done: usersCount > 0 },
+    { icon:'📊', label:'NLP Processing',    detail: nlp ? `${nlpDone} / ${nlp.total_users} users processed` : 'not started',                done: nlp && nlp.nlp_processed === nlp.total_users && nlp.total_users > 0 },
+    { icon:'🧠', label:'OCEAN Scoring',     detail: ocean ? `${oceanDone} / ${ocean.total_users} users scored` : 'not started',             done: ocean && ocean.ocean_scored === ocean.total_users && ocean.total_users > 0 },
+    { icon:'🎯', label:'Psychographic Match', detail: match ? `${match.total_scored ?? match.total_users ?? 0} users matched` : 'not started', done: ranked > 0 },
+    { icon:'🏆', label:'Lead Ranking',       detail: ranked ? `${ranked} leads ranked${topCat ? ' · top: ' + topCat : ''}` : 'no ranked leads', done: ranked > 0 },
+  ];
+
+  document.getElementById('ov-ladder').innerHTML = ladderSteps.map((s, i) => `
+    <div class="flex items-start gap-3 ${i < ladderSteps.length-1 ? 'pb-4 border-l-2 ml-5 pl-6 ' + (s.done ? 'border-indigo-200' : 'border-slate-200') : 'pl-6 ml-5'}">
+      <div class="absolute -ml-9 mt-0.5 w-6 h-6 rounded-full flex items-center justify-center text-sm ${s.done ? 'bg-indigo-100' : 'bg-slate-100'}">${s.icon}</div>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2">
+          <span class="text-sm font-semibold ${s.done ? 'text-slate-800' : 'text-slate-400'}">${s.label}</span>
+          ${s.done ? '<span class="text-green-500 text-xs">✅</span>' : '<span class="text-slate-300 text-xs">⏳</span>'}
+        </div>
+        <p class="text-xs ${s.done ? 'text-slate-500' : 'text-slate-400'} mt-0.5">${s.detail}</p>
+      </div>
+    </div>`).join('');
+}
+function _ovCard(icon, val, label, sub) {
+  return `<div class="bg-white border border-slate-200 rounded-xl p-4 text-center">
+    <div class="text-xl mb-1">${icon}</div>
+    <div class="text-xl font-bold text-indigo-600">${val}</div>
+    <div class="text-xs font-semibold text-slate-700 mt-1">${label}</div>
+    ${sub ? `<div class="text-xs text-slate-400 mt-0.5">${sub}</div>` : ''}
+  </div>`;
+}
+
+// ── Motivations Tab ────────────────────────────────────────────────────────────
+async function loadMotivations() {
+  if (!S.currentProductId) return;
+  show('motiv-loading'); hide('motiv-content'); hide('motiv-empty');
+  try {
+    const data = await apiGet(`/products/${S.currentProductId}/motivations`);
+    S.motivations = data;
+    hide('motiv-loading');
+    if (!data.categories?.length) { show('motiv-empty'); return; }
+    const el = document.getElementById('motiv-content');
+    el.innerHTML = data.categories.map((cat, i) => _motivCard(cat, i)).join('');
+    show('motiv-content');
+  } catch(e) {
+    document.getElementById('motiv-loading').innerHTML = `<p class="text-red-500 text-sm p-4">Failed: ${esc(e.message)}</p>`;
+  }
+}
+function _motivCard(cat, idx) {
+  const colors = ['#6366f1','#0891b2','#f59e0b','#10b981','#ef4444'];
+  const o = cat.ocean_profile;
+  const dims = o ? [
+    { k:'openness',          label:'Openness',          v: o.openness },
+    { k:'conscientiousness', label:'Conscientiousness',  v: o.conscientiousness },
+    { k:'extraversion',      label:'Extraversion',       v: o.extraversion },
+    { k:'agreeableness',     label:'Agreeableness',      v: o.agreeableness },
+    { k:'emotional_stability',label:'Emotional Stability',v: o.emotional_stability },
+  ] : [];
+  const tags = (o?.interest_tags || []).slice(0,6);
+  const keywords = (o?.search_keywords || []).slice(0,4);
+  return `
+  <div class="border border-slate-200 rounded-xl overflow-hidden">
+    <div class="px-5 py-4 flex items-start gap-3 bg-slate-50">
+      <div class="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white text-sm font-bold flex-shrink-0">${idx+1}</div>
+      <div class="flex-1 min-w-0">
+        <h4 class="font-semibold text-slate-900">${esc(cat.name)}</h4>
+        <p class="text-xs text-slate-500 mt-0.5 leading-relaxed">${esc(cat.description)}</p>
+      </div>
+    </div>
+    <div class="px-5 py-4 grid md:grid-cols-2 gap-5">
+      ${dims.length ? `
+      <div>
+        <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">OCEAN Target Profile</p>
+        <div class="space-y-2">
+          ${dims.map((d,di) => `
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-slate-500 w-28 text-right">${d.label}</span>
+            <div class="flex-1 ocean-bar"><div class="ocean-fill" style="width:${d.v*10}%;background:${colors[di]}"></div></div>
+            <span class="text-xs font-semibold text-slate-700 w-6 text-right">${d.v}</span>
+          </div>`).join('')}
+        </div>
+      </div>` : ''}
+      <div class="space-y-4">
+        ${tags.length ? `
+        <div>
+          <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Interest Tags</p>
+          <div class="flex flex-wrap gap-1.5">
+            ${tags.map(t => `<span class="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">${esc(t)}</span>`).join('')}
+          </div>
+        </div>` : ''}
+        ${keywords.length ? `
+        <div>
+          <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Search Keywords</p>
+          <div class="flex flex-wrap gap-1.5">
+            ${keywords.map(k => `<span class="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">${esc(k)}</span>`).join('')}
+          </div>
+        </div>` : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+// ── Users Tab ──────────────────────────────────────────────────────────────────
+async function loadUsers() {
+  if (!S.currentProductId) return;
+  show('users-loading'); hide('users-grid'); hide('users-empty'); hide('users-pagination');
+  try {
+    const data = await apiGet(
+      `/products/${S.currentProductId}/discovery/users?page=${S.usersPage}&limit=20`
+    );
+    hide('users-loading');
+    S.usersAllRows = data.users || [];
+    S.usersTotalPages = Math.max(1, Math.ceil(data.total / 20));
+    document.getElementById('users-count').textContent = `${data.total} users`;
+    if (!S.usersAllRows.length) { show('users-empty'); return; }
+    _renderUsersGrid(S.usersAllRows);
+    _updateUsersPagination(data.total);
+    show('users-pagination');
+  } catch(e) {
+    hide('users-loading');
+    document.getElementById('users-grid').innerHTML = `<p class="text-red-500 text-sm col-span-2">Failed: ${esc(e.message)}</p>`;
+    show('users-grid');
+  }
+}
+function filterUsersLocal() {
+  const q = document.getElementById('users-search').value.toLowerCase();
+  const filtered = q
+    ? S.usersAllRows.filter(u => u.username.toLowerCase().includes(q) || (u.location||'').toLowerCase().includes(q))
+    : S.usersAllRows;
+  _renderUsersGrid(filtered);
+}
+function _renderUsersGrid(users) {
+  const el = document.getElementById('users-grid');
+  el.innerHTML = users.map(u => _userCard(u)).join('');
+  show('users-grid');
+}
+function _userCard(u) {
+  const platformColors = { reddit:'bg-orange-100 text-orange-700', instagram:'bg-pink-100 text-pink-700', twitter:'bg-sky-100 text-sky-700', mock:'bg-slate-100 text-slate-600' };
+  const pc = platformColors[u.platform] || 'bg-slate-100 text-slate-600';
+  const flags = [
+    u.content_collected ? '📄 Content'  : null,
+    u.nlp_processed     ? '📊 NLP'      : null,
+    u.ocean_scored      ? '🧠 OCEAN'    : null,
+    u.matched           ? '🎯 Matched'  : null,
+  ].filter(Boolean);
+  return `
+  <div class="border border-slate-200 rounded-xl p-4 hover:shadow-sm transition-shadow">
+    <div class="flex items-start justify-between mb-2">
+      <div class="flex items-center gap-2 min-w-0">
+        <span class="text-xs font-medium px-2 py-0.5 rounded-full ${pc} flex-shrink-0">${u.platform}</span>
+        <span class="font-medium text-slate-800 text-sm truncate">@${esc(u.username)}</span>
+      </div>
+      <span class="text-xs text-slate-400 flex-shrink-0 ml-2">${u.follower_count.toLocaleString()} karma</span>
+    </div>
+    ${u.display_name ? `<p class="text-xs text-slate-600 mb-1">${esc(u.display_name)}</p>` : ''}
+    ${u.location ? `<p class="text-xs text-slate-400 mb-2">📍 ${esc(u.location)} <span class="opacity-60">(${u.location_confidence})</span></p>` : ''}
+    ${u.bio ? `<p class="text-xs text-slate-600 leading-relaxed mb-3 line-clamp-2">${esc(u.bio.substring(0,140))}${u.bio.length>140?'…':''}</p>` : ''}
+    <div class="flex items-center justify-between">
+      <div class="flex gap-1 flex-wrap">
+        ${flags.map(f => `<span class="text-xs bg-green-50 text-green-700 px-1.5 py-0.5 rounded">${f}</span>`).join('')}
+      </div>
+      <button onclick="openUserModal('${u.id}','${esc(u.username)}')"
+        class="text-xs text-indigo-600 hover:text-indigo-800 hover:underline flex-shrink-0 ml-2">
+        View Details →
+      </button>
+    </div>
+  </div>`;
+}
+function _updateUsersPagination(total) {
+  document.getElementById('users-page-info').textContent = `${total} total users`;
+  document.getElementById('users-page-indicator').textContent = `Page ${S.usersPage} of ${S.usersTotalPages}`;
+  document.getElementById('users-btn-prev').disabled = S.usersPage <= 1;
+  document.getElementById('users-btn-next').disabled = S.usersPage >= S.usersTotalPages;
+}
+function changeUsersPage(dir) {
+  const np = S.usersPage + dir;
+  if (np < 1 || np > S.usersTotalPages) return;
+  S.usersPage = np; loadUsers();
+}
+
+// ── User Detail Modal ──────────────────────────────────────────────────────────
+async function openUserModal(userId, username) {
+  document.getElementById('umodal-username').textContent = '@' + username;
+  document.getElementById('umodal-meta').innerHTML = '';
+  document.getElementById('umodal-body').classList.add('hidden');
+  show('umodal-loading');
+  show('modal-user');
+
+  try {
+    const [contentR, nlpR, oceanR] = await Promise.allSettled([
+      apiGet(`/products/${S.currentProductId}/discovery/users/${userId}/content`),
+      apiGet(`/products/${S.currentProductId}/discovery/users/${userId}/nlp`),
+      apiGet(`/products/${S.currentProductId}/discovery/users/${userId}/ocean`),
+    ]);
+    const content = contentR.status === 'fulfilled' ? contentR.value : [];
+    const nlp     = nlpR.status   === 'fulfilled' ? nlpR.value   : null;
+    const ocean   = oceanR.status === 'fulfilled' ? oceanR.value : null;
+
+    // Find user record for meta
+    const u = S.usersAllRows.find(x => x.id === userId);
+    if (u) {
+      const pc = {reddit:'bg-orange-100 text-orange-700',instagram:'bg-pink-100 text-pink-700',twitter:'bg-sky-100 text-sky-700'}[u.platform] || 'bg-slate-100 text-slate-600';
+      document.getElementById('umodal-meta').innerHTML = `
+        <span class="text-xs font-medium px-2 py-0.5 rounded-full ${pc}">${u.platform}</span>
+        ${u.location ? `<span class="text-xs text-slate-500">📍 ${esc(u.location)}</span>` : ''}
+        <span class="text-xs text-slate-400">${u.follower_count.toLocaleString()} karma</span>`;
+    }
+
+    const body = document.getElementById('umodal-body');
+    const dims = ['openness','conscientiousness','extraversion','agreeableness','neuroticism'];
+    const dColors = { openness:'#6366f1', conscientiousness:'#0891b2', extraversion:'#f59e0b', agreeableness:'#10b981', neuroticism:'#ef4444' };
+
+    body.innerHTML = `
+      <!-- Content Items -->
+      ${content.length ? `
+      <section>
+        <h4 class="text-sm font-semibold text-slate-700 mb-2">💬 Content (${content.length} items)</h4>
+        <div class="space-y-2">
+          ${content.slice(0,5).map(c => `
+          <div class="bg-slate-50 rounded-lg p-3 border border-slate-100">
+            <div class="flex justify-between items-center mb-1">
+              <span class="text-xs text-slate-400 uppercase font-medium">${c.content_type}</span>
+              ${c.engagement ? `<span class="text-xs text-slate-400">↑${c.engagement}</span>` : ''}
+            </div>
+            <p class="text-xs text-slate-700 leading-relaxed">${esc(c.content_text.substring(0,300))}${c.content_text.length>300?'…':''}</p>
+            ${c.source_url ? `<a href="${esc(c.source_url)}" target="_blank" class="text-xs text-indigo-500 hover:underline mt-1 block truncate">${esc(c.source_url)}</a>` : ''}
+          </div>`).join('')}
+        </div>
+      </section>` : '<p class="text-xs text-slate-400">No content collected yet.</p>'}
+
+      <!-- NLP Features -->
+      ${nlp ? `
+      <section>
+        <h4 class="text-sm font-semibold text-slate-700 mb-3">📊 NLP Features</h4>
+        ${nlp.interest_tags?.length ? `
+        <div class="mb-3">
+          <p class="text-xs font-medium text-slate-500 mb-1.5">Interest Tags</p>
+          <div class="flex flex-wrap gap-1.5">
+            ${nlp.interest_tags.map(t => `<span class="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">${esc(t)}</span>`).join('')}
+          </div>
+        </div>` : ''}
+        ${nlp.empath_scores && Object.keys(nlp.empath_scores).length ? `
+        <div class="mb-3">
+          <p class="text-xs font-medium text-slate-500 mb-1.5">Top Empath Signals</p>
+          <div class="space-y-1.5">
+            ${Object.entries(nlp.empath_scores).sort((a,b)=>b[1]-a[1]).slice(0,6).map(([k,v]) => `
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-slate-500 w-24 text-right truncate">${esc(k)}</span>
+              <div class="flex-1 ocean-bar"><div class="ocean-fill" style="width:${Math.min(v*400,100)}%;background:#6366f1"></div></div>
+              <span class="text-xs text-slate-400 w-10">${v.toFixed(3)}</span>
+            </div>`).join('')}
+          </div>
+        </div>` : ''}
+        <div class="grid grid-cols-3 gap-2 text-center text-xs">
+          <div class="bg-slate-50 rounded p-2"><div class="font-semibold text-slate-700">${nlp.total_tokens}</div><div class="text-slate-400">Tokens</div></div>
+          <div class="bg-slate-50 rounded p-2"><div class="font-semibold text-slate-700">${nlp.vocabulary_richness?.toFixed(2) ?? '—'}</div><div class="text-slate-400">Vocab Richness</div></div>
+          <div class="bg-slate-50 rounded p-2"><div class="font-semibold text-slate-700">${nlp.avg_sentence_length?.toFixed(1) ?? '—'}</div><div class="text-slate-400">Avg Sentence</div></div>
+        </div>
+      </section>` : '<section><p class="text-xs text-slate-400">NLP not yet processed for this user.</p></section>'}
+
+      <!-- OCEAN Scores -->
+      ${ocean ? `
+      <section>
+        <h4 class="text-sm font-semibold text-slate-700 mb-3">🧠 OCEAN Personality
+          <span class="text-xs font-normal text-slate-400 ml-1">${ocean.scoring_method} · ${ocean.confidence.toFixed(0)}% confidence</span>
+        </h4>
+        <div class="space-y-2">
+          ${dims.map(d => {
+            const v = ocean[d] ?? 50;
+            const cap = d.charAt(0).toUpperCase()+d.slice(1);
+            return `<div class="flex items-center gap-3">
+              <span class="text-xs text-slate-500 w-24 text-right">${cap}</span>
+              <div class="flex-1 ocean-bar"><div class="ocean-fill" style="width:${v}%;background:${dColors[d]}"></div></div>
+              <span class="text-xs font-semibold text-slate-700 w-8 text-right">${v.toFixed(0)}</span>
+            </div>`;
+          }).join('')}
+        </div>
+        ${ocean.reasoning && Object.values(ocean.reasoning).some(v=>v) ? `
+        <div class="mt-3 space-y-1">
+          ${Object.entries(ocean.reasoning).filter(([,v])=>v).map(([k,v]) => `
+          <p class="text-xs text-slate-500"><span class="font-medium capitalize">${k}:</span> ${esc(v)}</p>`).join('')}
+        </div>` : ''}
+      </section>` : '<section><p class="text-xs text-slate-400">OCEAN not yet scored for this user.</p></section>'}
+    `;
+
+    hide('umodal-loading');
+    body.classList.remove('hidden');
+  } catch(e) {
+    document.getElementById('umodal-loading').innerHTML = `<p class="text-red-500 text-sm p-4">Error: ${esc(e.message)}</p>`;
+  }
+}
+function closeUserModal() { hide('modal-user'); }
 
 // ── Analytics Tab ──────────────────────────────────────────────────────────────
 async function loadAnalytics() {
