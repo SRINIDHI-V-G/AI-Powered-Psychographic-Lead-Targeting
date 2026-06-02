@@ -4,6 +4,7 @@ from app.models.motivation import MotivationCategory, MotivationOceanProfile
 from app.models.discovery import DiscoveryJob, DiscoveredUser, UserContent
 from app.models.enrichment import EnrichmentJob, ProductEnrichmentSignal
 from app.models.nlp import UserEmbedding, UserNlpFeatures
+from app.models.ocean import UserOceanScore
 
 __all__ = [
     "Company",
@@ -19,4 +20,5 @@ __all__ = [
     "ProductEnrichmentSignal",
     "UserEmbedding",
     "UserNlpFeatures",
+    "UserOceanScore",
 ]

@@ -20,6 +20,7 @@ class OllamaClient:
         system: str,
         model: str | None = None,
         temperature: float = 0.3,
+        num_predict: int = 700,
     ) -> str:
         """
         Send a prompt to Ollama and return the raw response string.
@@ -37,10 +38,7 @@ class OllamaClient:
             "stream": False,
             "options": {
                 "temperature": temperature,
-                # num_predict caps output tokens; 1500 covers 5 JSON categories.
-                # 700 tokens safely fits 5 compact JSON motivation categories.
-                "num_predict": 700,
-                # 2048 context is ample; avoids the overhead of a larger KV cache.
+                "num_predict": num_predict,
                 "num_ctx": 2048,
             },
         }

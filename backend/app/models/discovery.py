@@ -200,6 +200,12 @@ class DiscoveredUser(Base):
         uselist=False,
         cascade="all, delete-orphan",
     )
+    ocean_score: Mapped["UserOceanScore | None"] = relationship(  # type: ignore[name-defined]  # noqa: F821
+        "UserOceanScore",
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
 
 
 # ── User Content ──────────────────────────────────────────────────────────────

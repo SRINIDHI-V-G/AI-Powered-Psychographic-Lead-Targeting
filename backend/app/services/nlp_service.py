@@ -214,7 +214,6 @@ async def start_nlp_background(product_id: str) -> None:
         try:
             summary = await run_nlp_for_product(db, UUID(product_id))
 
-            # Advance pipeline step
             product.status = ProductStatus.nlp_processing
             product.pipeline_step = 5
             await db.commit()
@@ -223,6 +222,17 @@ async def start_nlp_background(product_id: str) -> None:
                 "%s complete — processed=%d failed=%d",
                 _log, summary["processed"], summary["failed"],
             )
+
+            # ── Auto-trigger OCEAN scoring ────────────────────────────────────
+            if summary["processed"] > 0:
+                import asyncio
+                from app.services.ocean_service import start_ocean_background
+                logger.info(
+                    "%s auto-triggering OCEAN scoring for %d users",
+                    _log, summary["processed"],
+                )
+                asyncio.create_task(start_ocean_background(product_id))
+
         except Exception as exc:
             tb = traceback.format_exc()
             logger.exception("%s FAILED: %s", _log, exc)

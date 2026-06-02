@@ -14,13 +14,14 @@ from app.models import (  # noqa: F401
     Company, Product, MotivationCategory, MotivationOceanProfile,
     DiscoveryJob, DiscoveredUser, UserContent,
     EnrichmentJob, ProductEnrichmentSignal,
-    UserEmbedding, UserNlpFeatures,
+    UserEmbedding, UserNlpFeatures, UserOceanScore,
 )
 from app.routers import companies, products, motivations
 from app.routers import demo
 from app.routers import ollama
 from app.routers import discovery
 from app.routers import nlp
+from app.routers import ocean
 
 
 @asynccontextmanager
@@ -54,6 +55,7 @@ app.include_router(demo.router, prefix="/api/v1")
 app.include_router(ollama.router, prefix="/api/v1")
 app.include_router(discovery.router, prefix="/api/v1")
 app.include_router(nlp.router, prefix="/api/v1")
+app.include_router(ocean.router, prefix="/api/v1")
 
 STATIC_DIR = Path(__file__).parent.parent / "static"
 
