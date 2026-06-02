@@ -9,46 +9,34 @@ SYSTEM_PROMPT = (
 
 
 def build_motivation_prompt(product: dict) -> str:
-    return f"""Analyze this product and generate exactly 5 distinct motivation categories.
-Each category represents a different psychological reason WHY someone would buy this product.
+    name        = product["name"]
+    category    = product["category"]
+    price_range = product["price_range"]
+    description = product["description"]
 
-Product Name: {product['name']}
-Category: {product['category']}
-Price Range: {product['price_range']}
-Description: {product['description']}
-
-For each motivation category provide:
-- name: short category name (5-7 words max)
-- description: 2-3 sentences explaining this buyer type and what drives them
-- ocean: Big Five personality scores, each a float from 0.0 to 10.0
-  - openness: curiosity, creativity, aesthetic appreciation
-  - conscientiousness: organisation, discipline, planning
-  - extraversion: sociability, assertiveness, enthusiasm
-  - agreeableness: cooperation, trust, warmth
-  - emotional_stability: calmness, resilience (high = stable, low = anxious)
-- interest_tags: list of 5-8 interest areas this buyer likely follows
-- search_keywords: list of 8-12 keywords they would use in posts or captions
-- hashtags: list of 6-10 hashtags they would use
-
-Return ONLY this exact JSON — no text before or after it:
-{{
-  "motivation_categories": [
-    {{
-      "name": "string",
-      "description": "string",
-      "ocean": {{
-        "openness": 0.0,
-        "conscientiousness": 0.0,
-        "extraversion": 0.0,
-        "agreeableness": 0.0,
-        "emotional_stability": 0.0
-      }},
-      "interest_tags": [],
-      "search_keywords": [],
-      "hashtags": []
-    }}
-  ]
-}}"""
+    return (
+        "You are analyzing a product to identify 5 distinct psychographic buyer types.\n\n"
+        f"Product Name: {name}\n"
+        f"Category: {category}\n"
+        f"Price Range: {price_range}\n"
+        f"Description: {description}\n\n"
+        "Generate exactly 5 motivation categories. "
+        "Each category is a different psychological reason WHY someone buys this product.\n\n"
+        "Rules:\n"
+        "- Output ONLY raw JSON. No markdown. No code blocks. No backticks. No explanation.\n"
+        "- Start your response with { and end with }\n"
+        "- All OCEAN scores must be floats between 0.0 and 10.0\n\n"
+        'Required JSON format (replace example values with real content):\n'
+        '{"motivation_categories": ['
+        '{"name": "short category name", '
+        '"description": "1-2 sentences about this buyer", '
+        '"ocean": {"openness": 7.5, "conscientiousness": 6.0, "extraversion": 5.5, '
+        '"agreeableness": 6.5, "emotional_stability": 7.0}, '
+        '"interest_tags": ["tag1", "tag2", "tag3"], '
+        '"search_keywords": ["kw1", "kw2", "kw3", "kw4", "kw5"], '
+        '"hashtags": ["#tag1", "#tag2", "#tag3"]}'
+        "]}"
+    )
 
 
 def _clamp(value: object, lo: float = 0.0, hi: float = 10.0) -> float:
@@ -58,21 +46,105 @@ def _clamp(value: object, lo: float = 0.0, hi: float = 10.0) -> float:
         return 5.0
 
 
+def _strip_markdown_fences(text: str) -> str:
+    """Remove ```json ... ``` or ``` ... ``` wrappers that Llama sometimes adds."""
+    text = text.strip()
+    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```$", "", text)
+    return text.strip()
+
+
+def _extract_json(text: str) -> str | None:
+    """
+    Try two strategies to pull a JSON object out of raw LLM output.
+    Returns the raw JSON string, or None if nothing usable is found.
+    """
+    # Strategy 1: strip markdown fences — if what remains starts with { use it directly
+    cleaned = _strip_markdown_fences(text)
+    if cleaned.startswith("{"):
+        return cleaned
+
+    # Strategy 2: find the first { ... } block with greedy match
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match:
+        return match.group()
+
+    return None
+
+
+def _recover_partial_categories(text: str) -> list[dict]:
+    """
+    Fallback for truncated JSON. The outer object may never close (truncated),
+    so we locate the 'motivation_categories' array first, then brace-match
+    each individual category object inside it.
+    """
+    # Step 1: find the start of the categories array
+    marker = '"motivation_categories"'
+    marker_idx = text.find(marker)
+    if marker_idx == -1:
+        return []
+
+    bracket_idx = text.find("[", marker_idx + len(marker))
+    if bracket_idx == -1:
+        return []
+
+    # Step 2: search inside the array for complete category objects
+    search_area = text[bracket_idx + 1:]
+    recovered: list[dict] = []
+    i = 0
+    while i < len(search_area):
+        if search_area[i] != "{":
+            i += 1
+            continue
+        depth = 0
+        j = i
+        while j < len(search_area):
+            ch = search_area[j]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = search_area[i : j + 1]
+                    try:
+                        obj = json.loads(candidate)
+                        if isinstance(obj, dict) and "name" in obj and "ocean" in obj:
+                            recovered.append(obj)
+                    except json.JSONDecodeError:
+                        pass
+                    i = j + 1
+                    break
+            j += 1
+        else:
+            break  # reached end of text with no closing brace — stop
+    return recovered
+
+
 def parse_motivation_response(text: str) -> list[dict] | None:
     """
-    Extracts the first JSON object from the LLM response and returns
-    a cleaned list of motivation category dicts. Returns None if parsing fails.
+    Extracts a JSON object from raw LLM output and returns a cleaned list of
+    motivation category dicts. Returns None if parsing fails at any step.
+
+    Strategy:
+      1. Try to parse the whole response as JSON (handles clean output).
+      2. If that fails (e.g. truncated), recover individual category objects
+         using brace-matching (handles cut-off responses).
     """
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if not match:
-        return None
+    raw_categories: list = []
 
-    try:
-        data = json.loads(match.group())
-    except json.JSONDecodeError:
-        return None
+    # Strategy 1 — full JSON parse
+    json_str = _extract_json(text)
+    if json_str:
+        try:
+            data = json.loads(json_str)
+            raw_categories = data.get("motivation_categories") or []
+        except json.JSONDecodeError:
+            pass
 
-    raw_categories = data.get("motivation_categories")
+    # Strategy 2 — brace-matching fallback for truncated responses
+    if not raw_categories:
+        raw_categories = _recover_partial_categories(text)
+
     if not isinstance(raw_categories, list) or not raw_categories:
         return None
 
@@ -86,15 +158,15 @@ def parse_motivation_response(text: str) -> list[dict] | None:
                 "name": str(cat.get("name", "Unnamed"))[:255],
                 "description": str(cat.get("description", "")),
                 "ocean": {
-                    "openness": _clamp(ocean_raw.get("openness", 5.0)),
-                    "conscientiousness": _clamp(ocean_raw.get("conscientiousness", 5.0)),
-                    "extraversion": _clamp(ocean_raw.get("extraversion", 5.0)),
-                    "agreeableness": _clamp(ocean_raw.get("agreeableness", 5.0)),
+                    "openness":            _clamp(ocean_raw.get("openness", 5.0)),
+                    "conscientiousness":   _clamp(ocean_raw.get("conscientiousness", 5.0)),
+                    "extraversion":        _clamp(ocean_raw.get("extraversion", 5.0)),
+                    "agreeableness":       _clamp(ocean_raw.get("agreeableness", 5.0)),
                     "emotional_stability": _clamp(ocean_raw.get("emotional_stability", 5.0)),
                 },
-                "interest_tags": [str(t) for t in cat.get("interest_tags") or []],
+                "interest_tags":   [str(t) for t in cat.get("interest_tags") or []],
                 "search_keywords": [str(k) for k in cat.get("search_keywords") or []],
-                "hashtags": [str(h) for h in cat.get("hashtags") or []],
+                "hashtags":        [str(h) for h in cat.get("hashtags") or []],
             }
         )
 

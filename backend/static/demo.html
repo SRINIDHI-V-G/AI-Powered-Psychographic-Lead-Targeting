@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PsychoLead AI — Psychographic Lead Intelligence</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<style>
+  * { font-family: 'Inter', sans-serif; }
+  .fade-in { animation: fadeIn 0.5s ease-in; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+  .counter { transition: all 0.3s ease; }
+  .tier-hot  { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+  .tier-warm { background: #fff7ed; color: #ea580c; border: 1px solid #fed7aa; }
+  .tier-cold { background: #eff6ff; color: #2563eb; border: 1px solid #bfdbfe; }
+  .step-done   { background: #4f46e5; color: white; }
+  .step-active { background: white; border: 2px solid #4f46e5; color: #4f46e5; }
+  .step-wait   { background: #e2e8f0; color: #94a3b8; }
+  .ocean-bar { height: 6px; border-radius: 3px; background: #e2e8f0; overflow: hidden; }
+  .ocean-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #6366f1, #8b5cf6); transition: width 0.8s ease; }
+  .platform-ig  { background: #fdf2f8; color: #a21caf; }
+  .platform-rd  { background: #fff7ed; color: #c2410c; }
+  .platform-tw  { background: #eff6ff; color: #1d4ed8; }
+  .card { background: white; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04); }
+  ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: #f1f5f9; } ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 2px; }
+</style>
+</head>
+
+<body class="bg-slate-50 min-h-screen">
+
+<!-- TOP NAV -->
+<nav class="fixed top-0 left-0 right-0 z-50 bg-white border-b border-slate-200 px-6 py-3 flex items-center justify-between">
+  <div class="flex items-center gap-3">
+    <div class="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center">
+      <svg class="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+    </div>
+    <span class="font-bold text-slate-900 text-lg">PsychoLead <span class="text-indigo-600">AI</span></span>
+    <span class="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-medium">DEMO MODE</span>
+  </div>
+  <div class="flex items-center gap-3">
+    <div id="status-badge" class="hidden items-center gap-2 text-sm text-slate-600">
+      <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+      <span id="status-text">Pipeline complete</span>
+    </div>
+    <button onclick="resetDemo()" class="text-xs text-slate-500 hover:text-slate-700 px-3 py-1.5 rounded-lg hover:bg-slate-100 transition-colors">Reset Demo</button>
+    <button onclick="runDemo()" id="run-btn" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors flex items-center gap-2">
+      <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      Run Demo
+    </button>
+  </div>
+</nav>
+
+<!-- LAYOUT -->
+<div class="flex pt-14">
+
+  <!-- SIDEBAR -->
+  <aside class="fixed left-0 top-14 bottom-0 w-56 bg-white border-r border-slate-200 flex flex-col p-4 gap-1 overflow-y-auto z-40">
+    <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider px-2 mb-2">Navigation</p>
+    <button onclick="showTab('overview')" id="tab-overview" class="nav-btn flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors w-full text-left">
+      <svg class="w-4 h-4 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
+      Overview
+    </button>
+    <button onclick="showTab('product')" id="tab-product" class="nav-btn flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors w-full text-left">
+      <svg class="w-4 h-4 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
+      Product
+    </button>
+    <button onclick="showTab('motivations')" id="tab-motivations" class="nav-btn flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors w-full text-left">
+      <svg class="w-4 h-4 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+      AI Motivations
+    </button>
+    <button onclick="showTab('users')" id="tab-users" class="nav-btn flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors w-full text-left">
+      <svg class="w-4 h-4 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+      Discovered Users
+    </button>
+    <button onclick="showTab('leads')" id="tab-leads" class="nav-btn flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors w-full text-left">
+      <svg class="w-4 h-4 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+      Lead Rankings
+    </button>
+
+    <div class="mt-auto pt-4 border-t border-slate-100">
+      <p class="text-xs text-slate-400 px-2 mb-2">Pipeline Status</p>
+      <div id="pipeline-mini" class="px-2 space-y-1.5"></div>
+    </div>
+  </aside>
+
+  <!-- MAIN CONTENT -->
+  <main class="ml-56 flex-1 p-6 min-h-screen">
+
+    <!-- LANDING (shown before demo runs) -->
+    <div id="landing" class="flex flex-col items-center justify-center min-h-[80vh] text-center fade-in">
+      <div class="w-16 h-16 rounded-2xl bg-indigo-600 flex items-center justify-center mb-6 shadow-lg">
+        <svg class="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+      </div>
+      <h1 class="text-3xl font-bold text-slate-900 mb-3">AI Psychographic Lead Intelligence</h1>
+      <p class="text-slate-500 text-lg max-w-lg mb-8">Discover high-intent leads by matching personality profiles to buyer motivations. Go beyond demographics — target <em>why</em> people buy.</p>
+      <div class="flex flex-col sm:flex-row gap-4 mb-10">
+        <div class="text-left bg-white rounded-xl p-5 shadow-sm border border-slate-100 w-56">
+          <div class="text-2xl font-bold text-indigo-600 mb-1">5</div>
+          <div class="text-sm text-slate-600">AI-generated buyer motivation profiles</div>
+        </div>
+        <div class="text-left bg-white rounded-xl p-5 shadow-sm border border-slate-100 w-56">
+          <div class="text-2xl font-bold text-indigo-600 mb-1">847</div>
+          <div class="text-sm text-slate-600">Public profiles discovered & analysed</div>
+        </div>
+        <div class="text-left bg-white rounded-xl p-5 shadow-sm border border-slate-100 w-56">
+          <div class="text-2xl font-bold text-indigo-600 mb-1">87%</div>
+          <div class="text-sm text-slate-600">Top lead psychographic compatibility</div>
+        </div>
+      </div>
+      <button onclick="runDemo()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-8 py-3 rounded-xl text-lg transition-colors shadow-md hover:shadow-lg flex items-center gap-2">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>
+        Run Live Demo
+      </button>
+      <p class="text-xs text-slate-400 mt-4">Premium Sofa · Comfort Furniture India · Target: Chennai</p>
+    </div>
+
+    <!-- PIPELINE PROGRESS (shown while running) -->
+    <div id="pipeline-view" class="hidden fade-in">
+      <h2 class="text-xl font-bold text-slate-900 mb-1">AI Pipeline Running</h2>
+      <p class="text-slate-500 text-sm mb-6">Analysing product, discovering leads, scoring personalities...</p>
+      <div id="pipeline-steps" class="space-y-3 max-w-xl"></div>
+    </div>
+
+    <!-- MAIN DASHBOARD (shown after demo runs) -->
+    <div id="dashboard" class="hidden">
+
+      <!-- OVERVIEW TAB -->
+      <div id="tab-content-overview" class="fade-in">
+        <div class="flex items-center justify-between mb-6">
+          <div>
+            <h2 class="text-xl font-bold text-slate-900">Campaign Overview</h2>
+            <p class="text-slate-500 text-sm">Premium Sofa · Chennai · Comfort Furniture India</p>
+          </div>
+          <span class="flex items-center gap-2 text-sm text-green-600 bg-green-50 px-3 py-1.5 rounded-full font-medium">
+            <div class="w-2 h-2 bg-green-500 rounded-full"></div> Pipeline Complete
+          </span>
+        </div>
+
+        <!-- Stats row -->
+        <div class="grid grid-cols-4 gap-4 mb-6">
+          <div class="card p-5">
+            <p class="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">Users Discovered</p>
+            <p class="text-3xl font-bold text-slate-900 counter" data-target="847">0</p>
+            <p class="text-xs text-slate-400 mt-1">Instagram · Reddit · Twitter</p>
+          </div>
+          <div class="card p-5">
+            <p class="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">OCEAN Scored</p>
+            <p class="text-3xl font-bold text-slate-900 counter" data-target="823">0</p>
+            <p class="text-xs text-slate-400 mt-1">via Llama 3.1 8B</p>
+          </div>
+          <div class="card p-5">
+            <p class="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">Hot Leads</p>
+            <p class="text-3xl font-bold text-red-600 counter" data-target="4">0</p>
+            <p class="text-xs text-slate-400 mt-1">Score &gt; 75% match</p>
+          </div>
+          <div class="card p-5">
+            <p class="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">Top Match Score</p>
+            <p class="text-3xl font-bold text-indigo-600">87<span class="text-lg">%</span></p>
+            <p class="text-xs text-slate-400 mt-1">Priya Sharma · Instagram</p>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-3 gap-4 mb-6">
+          <!-- Source breakdown -->
+          <div class="card p-5">
+            <p class="text-sm font-semibold text-slate-700 mb-4">Discovery Sources</p>
+            <canvas id="source-chart" height="180"></canvas>
+          </div>
+          <!-- Tier breakdown -->
+          <div class="card p-5">
+            <p class="text-sm font-semibold text-slate-700 mb-4">Lead Tier Distribution</p>
+            <canvas id="tier-chart" height="180"></canvas>
+          </div>
+          <!-- Top motivation -->
+          <div class="card p-5">
+            <p class="text-sm font-semibold text-slate-700 mb-3">Top Motivation Categories</p>
+            <div class="space-y-3">
+              <div><div class="flex justify-between text-xs mb-1"><span class="text-slate-600">Aesthetic & Interior Design</span><span class="font-medium text-indigo-600">34%</span></div><div class="ocean-bar"><div class="ocean-fill" style="width:34%"></div></div></div>
+              <div><div class="flex justify-between text-xs mb-1"><span class="text-slate-600">Luxury & Status</span><span class="font-medium text-indigo-600">22%</span></div><div class="ocean-bar"><div class="ocean-fill" style="width:22%"></div></div></div>
+              <div><div class="flex justify-between text-xs mb-1"><span class="text-slate-600">Comfort & Family</span><span class="font-medium text-indigo-600">19%</span></div><div class="ocean-bar"><div class="ocean-fill" style="width:19%"></div></div></div>
+              <div><div class="flex justify-between text-xs mb-1"><span class="text-slate-600">Durability Focus</span><span class="font-medium text-indigo-600">15%</span></div><div class="ocean-bar"><div class="ocean-fill" style="width:15%"></div></div></div>
+              <div><div class="flex justify-between text-xs mb-1"><span class="text-slate-600">Modern Design</span><span class="font-medium text-indigo-600">10%</span></div><div class="ocean-bar"><div class="ocean-fill" style="width:10%"></div></div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Activity log -->
+        <div class="card p-5">
+          <p class="text-sm font-semibold text-slate-700 mb-3">Pipeline Activity Log</p>
+          <div class="space-y-2 text-xs text-slate-500 font-mono">
+            <div class="flex gap-3"><span class="text-green-500">[OK]</span><span>Product submitted: Premium Sofa (premium, Chennai)</span></div>
+            <div class="flex gap-3"><span class="text-green-500">[OK]</span><span>LLM generated 5 psychographic motivation categories</span></div>
+            <div class="flex gap-3"><span class="text-green-500">[OK]</span><span>Discovery: 412 Instagram + 248 Reddit + 187 Twitter profiles</span></div>
+            <div class="flex gap-3"><span class="text-green-500">[OK]</span><span>Content collected: 15,234 posts, captions, bios</span></div>
+            <div class="flex gap-3"><span class="text-green-500">[OK]</span><span>NLP pipeline: embeddings + Empath + BERTopic + spaCy</span></div>
+            <div class="flex gap-3"><span class="text-green-500">[OK]</span><span>OCEAN scored 823 / 847 profiles (97.2% success rate)</span></div>
+            <div class="flex gap-3"><span class="text-green-500">[OK]</span><span>Matching engine: 4,235 compatibility scores computed</span></div>
+            <div class="flex gap-3"><span class="text-green-500">[OK]</span><span>Lead ranking: 4 Hot · 4 Warm · 2 Cold leads identified</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PRODUCT TAB -->
+      <div id="tab-content-product" class="hidden fade-in">
+        <h2 class="text-xl font-bold text-slate-900 mb-6">Submitted Product</h2>
+        <div class="max-w-2xl">
+          <div class="card p-6 mb-4">
+            <div class="flex items-start gap-4">
+              <div class="w-12 h-12 rounded-xl bg-indigo-50 flex items-center justify-center flex-shrink-0">
+                <svg class="w-6 h-6 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
+              </div>
+              <div>
+                <h3 class="font-bold text-slate-900 text-lg">Premium Sofa</h3>
+                <p class="text-slate-500 text-sm mt-1">Handcrafted 3-seater premium sofa with full-grain Italian leather and solid oak frame. The centrepiece for any luxury living room in Chennai.</p>
+              </div>
+            </div>
+            <div class="grid grid-cols-3 gap-4 mt-5 pt-4 border-t border-slate-100">
+              <div><p class="text-xs text-slate-400">Category</p><p class="font-medium text-slate-700">Furniture / Sofas</p></div>
+              <div><p class="text-xs text-slate-400">Price Range</p><p class="font-medium text-slate-700">Premium</p></div>
+              <div><p class="text-xs text-slate-400">Target Location</p><p class="font-medium text-slate-700">Chennai, Tamil Nadu</p></div>
+            </div>
+          </div>
+          <div class="card p-6">
+            <p class="text-sm font-semibold text-slate-700 mb-3">Company</p>
+            <p class="font-bold text-slate-900">Comfort Furniture India</p>
+            <p class="text-slate-500 text-sm">Furniture & Home Decor · demo@psycholead.ai</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- MOTIVATIONS TAB -->
+      <div id="tab-content-motivations" class="hidden fade-in">
+        <h2 class="text-xl font-bold text-slate-900 mb-2">AI-Generated Buyer Motivations</h2>
+        <p class="text-slate-500 text-sm mb-6">Llama 3.1 identified 5 distinct psychological reasons people buy this product — each with an expected OCEAN personality profile.</p>
+        <div id="motivation-cards" class="grid grid-cols-1 gap-4"></div>
+      </div>
+
+      <!-- USERS TAB -->
+      <div id="tab-content-users" class="hidden fade-in">
+        <div class="flex items-center justify-between mb-6">
+          <div>
+            <h2 class="text-xl font-bold text-slate-900">Discovered Users</h2>
+            <p class="text-slate-500 text-sm">847 public profiles discovered · Top 10 shown</p>
+          </div>
+          <div class="flex gap-2">
+            <span class="text-xs bg-pink-100 text-pink-700 px-2 py-1 rounded-full font-medium">Instagram 412</span>
+            <span class="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded-full font-medium">Reddit 248</span>
+            <span class="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full font-medium">Twitter 187</span>
+          </div>
+        </div>
+        <div id="user-grid" class="grid grid-cols-2 gap-4"></div>
+      </div>
+
+      <!-- LEADS TAB -->
+      <div id="tab-content-leads" class="hidden fade-in">
+        <div class="flex items-center justify-between mb-6">
+          <div>
+            <h2 class="text-xl font-bold text-slate-900">Lead Rankings</h2>
+            <p class="text-slate-500 text-sm">Ranked by psychographic compatibility score</p>
+          </div>
+          <div class="flex gap-3 text-sm">
+            <span class="tier-hot px-2 py-1 rounded-full text-xs font-medium">4 Hot</span>
+            <span class="tier-warm px-2 py-1 rounded-full text-xs font-medium">4 Warm</span>
+            <span class="tier-cold px-2 py-1 rounded-full text-xs font-medium">2 Cold</span>
+          </div>
+        </div>
+
+        <!-- Lead detail card (expanded on click) -->
+        <div id="lead-detail" class="hidden card p-5 mb-4 border-2 border-indigo-200">
+          <div class="flex items-center justify-between mb-3">
+            <span class="text-sm font-semibold text-slate-700">Lead Profile</span>
+            <button onclick="document.getElementById('lead-detail').classList.add('hidden')" class="text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
+          </div>
+          <div id="lead-detail-content"></div>
+        </div>
+
+        <div class="card overflow-hidden">
+          <table class="w-full text-sm">
+            <thead><tr class="bg-slate-50 border-b border-slate-200">
+              <th class="text-left p-4 text-xs font-semibold text-slate-500 uppercase">Rank</th>
+              <th class="text-left p-4 text-xs font-semibold text-slate-500 uppercase">Lead</th>
+              <th class="text-left p-4 text-xs font-semibold text-slate-500 uppercase">Best Motivation</th>
+              <th class="text-left p-4 text-xs font-semibold text-slate-500 uppercase">Match Score</th>
+              <th class="text-left p-4 text-xs font-semibold text-slate-500 uppercase">Tier</th>
+              <th class="text-left p-4 text-xs font-semibold text-slate-500 uppercase">OCEAN</th>
+            </tr></thead>
+            <tbody id="leads-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+    </div><!-- end dashboard -->
+  </main>
+</div>
+
+<script>
+const API = '';  // same-origin
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let state = { demoData: null, running: false, radarCharts: {} };
+
+const PIPELINE_STEPS = [
+  { icon: '📦', label: 'Product Submitted',        detail: 'Premium Sofa · Premium · Chennai' },
+  { icon: '🧠', label: 'AI Motivation Analysis',   detail: 'Llama 3.1 generating buyer personas...' },
+  { icon: '🔍', label: 'User Discovery',            detail: 'Scanning Instagram, Reddit, Twitter...' },
+  { icon: '📝', label: 'Content Collection',        detail: 'Collecting posts, bios, captions...' },
+  { icon: '🔬', label: 'NLP Processing',            detail: 'Embeddings + Empath + BERTopic + spaCy...' },
+  { icon: '🎯', label: 'OCEAN Personality Scoring', detail: 'Llama 3.1 scoring 847 profiles...' },
+  { icon: '⚡', label: 'Matching Engine',            detail: 'Computing compatibility scores...' },
+  { icon: '🏆', label: 'Lead Ranking',              detail: 'Ranking by psychographic fit...' },
+  { icon: '✅', label: 'Pipeline Complete',         detail: '4 Hot · 4 Warm · 2 Cold leads ready' },
+];
+
+const OCEAN_LABELS = ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeableness', 'Stability'];
+const OCEAN_KEYS   = ['openness','conscientiousness','extraversion','agreeableness','emotional_stability'];
+
+// ── Main demo runner ──────────────────────────────────────────────────────────
+async function runDemo() {
+  if (state.running) return;
+  state.running = true;
+  document.getElementById('run-btn').disabled = true;
+  document.getElementById('run-btn').innerHTML = '<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg> Running...';
+
+  // Hide landing, show pipeline
+  document.getElementById('landing').classList.add('hidden');
+  document.getElementById('pipeline-view').classList.remove('hidden');
+  document.getElementById('dashboard').classList.add('hidden');
+
+  // Animate pipeline steps
+  const stepsEl = document.getElementById('pipeline-steps');
+  stepsEl.innerHTML = '';
+  for (let i = 0; i < PIPELINE_STEPS.length; i++) {
+    stepsEl.innerHTML += stepHtml(i, 'wait');
+  }
+
+  // Call backend
+  let setupData = null;
+  try {
+    const res = await fetch(`${API}/api/v1/demo/setup`, { method: 'POST' });
+    setupData = await res.json();
+  } catch(e) {
+    // Use fallback mock IDs for demo if backend unreachable
+    setupData = { product_id: 'demo-product', api_key: 'demo-key', status: 'demo_ready' };
+  }
+  state.demoData = setupData;
+
+  // Animate steps one by one
+  for (let i = 0; i < PIPELINE_STEPS.length; i++) {
+    updateStep(i, 'active');
+    await sleep(i < 2 ? 400 : 800);
+    updateStep(i, 'done');
+  }
+
+  // Load data then show dashboard
+  await loadAllData(setupData.product_id, setupData.api_key);
+  await sleep(400);
+
+  document.getElementById('pipeline-view').classList.add('hidden');
+  document.getElementById('dashboard').classList.remove('hidden');
+  document.getElementById('status-badge').classList.remove('hidden');
+  document.getElementById('status-badge').classList.add('flex');
+
+  renderPipelineMini();
+  showTab('overview');
+  animateCounters();
+  renderCharts();
+
+  document.getElementById('run-btn').disabled = false;
+  document.getElementById('run-btn').innerHTML = '<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg> Re-run Demo';
+  state.running = false;
+}
+
+async function loadAllData(productId, apiKey) {
+  const headers = { 'X-API-Key': apiKey };
+
+  // Motivations (real from DB)
+  try {
+    const r = await fetch(`${API}/api/v1/products/${productId}/motivations`, { headers });
+    const d = await r.json();
+    state.motivations = d.categories && d.categories.length > 0 ? d.categories : FALLBACK_MOTIVATIONS;
+  } catch { state.motivations = FALLBACK_MOTIVATIONS; }
+
+  // Users & leads (mock)
+  try {
+    const r = await fetch(`${API}/api/v1/demo/${productId}/users`);
+    const d = await r.json();
+    state.users = d.users;
+  } catch { state.users = FALLBACK_USERS; }
+
+  try {
+    const r = await fetch(`${API}/api/v1/demo/${productId}/leads`);
+    const d = await r.json();
+    state.leads = d.leads;
+  } catch { state.leads = FALLBACK_USERS; }
+
+  renderMotivations();
+  renderUsers();
+  renderLeads();
+}
+
+// ── Rendering ─────────────────────────────────────────────────────────────────
+function renderMotivations() {
+  const container = document.getElementById('motivation-cards');
+  if (!state.motivations) return;
+  container.innerHTML = state.motivations.map((m, i) => {
+    const op = m.ocean_profile || m.ocean || {};
+    const it = (op.interest_tags || m.interest_tags || []).slice(0,5);
+    return `
+    <div class="card p-5 fade-in">
+      <div class="flex items-start gap-5">
+        <div class="flex-1">
+          <div class="flex items-center gap-2 mb-2">
+            <span class="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 text-xs font-bold flex items-center justify-center">${i+1}</span>
+            <h3 class="font-bold text-slate-900">${m.name}</h3>
+          </div>
+          <p class="text-slate-500 text-sm leading-relaxed mb-3">${m.description}</p>
+          <div class="flex flex-wrap gap-1.5 mb-4">
+            ${it.map(t=>`<span class="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full">${t}</span>`).join('')}
+          </div>
+          <div class="grid grid-cols-5 gap-2">
+            ${OCEAN_KEYS.map((k,j)=>`
+            <div class="text-center">
+              <div class="text-xs font-semibold text-indigo-600 mb-1">${(op[k]||5).toFixed(1)}</div>
+              <div class="ocean-bar"><div class="ocean-fill" style="width:${((op[k]||5)/10)*100}%"></div></div>
+              <div class="text-xs text-slate-400 mt-1">${['O','C','E','A','S'][j]}</div>
+            </div>`).join('')}
+          </div>
+        </div>
+        <div style="width:160px;height:160px;flex-shrink:0">
+          <canvas id="ocean-chart-${i}"></canvas>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // Render radar charts after DOM update
+  setTimeout(() => {
+    state.motivations.forEach((m,i) => {
+      const op = m.ocean_profile || m.ocean || {};
+      const ctx = document.getElementById(`ocean-chart-${i}`);
+      if(!ctx) return;
+      if(state.radarCharts[i]) { state.radarCharts[i].destroy(); }
+      state.radarCharts[i] = new Chart(ctx, {
+        type: 'radar',
+        data: {
+          labels: OCEAN_LABELS,
+          datasets: [{
+            data: OCEAN_KEYS.map(k => op[k] || 5),
+            backgroundColor: 'rgba(99,102,241,0.15)',
+            borderColor: 'rgba(99,102,241,0.8)',
+            pointBackgroundColor: '#6366f1',
+            pointRadius: 3,
+            borderWidth: 2,
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: true,
+          plugins: { legend: { display: false } },
+          scales: { r: { min: 0, max: 10, ticks: { stepSize: 2, font:{size:9} }, pointLabels:{font:{size:9}} } }
+        }
+      });
+    });
+  }, 100);
+}
+
+function renderUsers() {
+  const grid = document.getElementById('user-grid');
+  if (!state.users) return;
+  grid.innerHTML = state.users.map(u => `
+  <div class="card p-4 hover:shadow-md transition-shadow cursor-pointer" onclick="showLeadDetail('${u.id||u.username}')">
+    <div class="flex items-start gap-3 mb-3">
+      <div class="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-400 to-purple-600 flex items-center justify-center text-white font-bold text-sm flex-shrink-0">
+        ${(u.display_name||u.username).split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase()}
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2">
+          <p class="font-semibold text-slate-900 text-sm truncate">${u.display_name||u.username}</p>
+          <span class="tier-${u.tier} text-xs px-1.5 py-0.5 rounded-full font-medium flex-shrink-0">${u.tier.toUpperCase()}</span>
+        </div>
+        <p class="text-xs text-slate-500">@${u.username} · <span class="platform-${u.platform.slice(0,2)} px-1.5 py-0.5 rounded text-xs font-medium">${u.platform}</span></p>
+      </div>
+    </div>
+    <p class="text-xs text-slate-500 line-clamp-2 mb-3 leading-relaxed">${u.bio}</p>
+    <div class="flex justify-between items-center mb-2">
+      <span class="text-xs text-slate-400">${(u.follower_count/1000).toFixed(1)}k followers</span>
+      <span class="text-sm font-bold text-indigo-600">${Math.round(u.compatibility_score*100)}%</span>
+    </div>
+    <div class="space-y-1">
+      ${OCEAN_KEYS.map((k,j)=>`
+      <div class="flex items-center gap-2">
+        <span class="text-xs text-slate-400 w-3">${['O','C','E','A','S'][j]}</span>
+        <div class="ocean-bar flex-1"><div class="ocean-fill" style="width:${((u.ocean[k]||5)/10)*100}%"></div></div>
+        <span class="text-xs text-slate-500 w-6 text-right">${(u.ocean[k]||5).toFixed(1)}</span>
+      </div>`).join('')}
+    </div>
+  </div>`).join('');
+}
+
+function renderLeads() {
+  const tbody = document.getElementById('leads-table-body');
+  if (!state.leads) return;
+  tbody.innerHTML = state.leads.map(l => `
+  <tr class="border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors" onclick="showLeadDetail('${l.id||l.username}')">
+    <td class="p-4">
+      <span class="w-8 h-8 rounded-full ${l.rank<=3?'bg-indigo-600 text-white':'bg-slate-100 text-slate-600'} flex items-center justify-center text-xs font-bold">#${l.rank}</span>
+    </td>
+    <td class="p-4">
+      <div class="flex items-center gap-2.5">
+        <div class="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-400 to-purple-600 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+          ${(l.display_name||l.username).split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase()}
+        </div>
+        <div>
+          <p class="font-medium text-slate-900 text-sm">${l.display_name||l.username}</p>
+          <p class="text-xs text-slate-400">@${l.username} · ${l.location||'Chennai'}</p>
+        </div>
+      </div>
+    </td>
+    <td class="p-4 max-w-xs">
+      <span class="text-xs bg-indigo-50 text-indigo-700 px-2 py-1 rounded-full">${l.best_motivation}</span>
+    </td>
+    <td class="p-4">
+      <div class="flex items-center gap-2">
+        <div class="w-24 bg-slate-200 rounded-full h-2 overflow-hidden">
+          <div class="h-full rounded-full ${l.compatibility_score>=0.75?'bg-red-500':l.compatibility_score>=0.5?'bg-orange-500':'bg-blue-500'}" style="width:${l.compatibility_score*100}%"></div>
+        </div>
+        <span class="text-sm font-bold text-slate-700">${Math.round(l.compatibility_score*100)}%</span>
+      </div>
+    </td>
+    <td class="p-4"><span class="tier-${l.tier} text-xs px-2 py-1 rounded-full font-medium">${l.tier.charAt(0).toUpperCase()+l.tier.slice(1)}</span></td>
+    <td class="p-4">
+      <div class="flex gap-1">
+        ${OCEAN_KEYS.map(k=>`<div class="w-3 rounded-sm" style="height:${Math.round((l.ocean[k]/10)*24)+4}px;background:rgba(99,102,241,${0.3+(l.ocean[k]/10)*0.7})" title="${k}: ${l.ocean[k]}"></div>`).join('')}
+      </div>
+    </td>
+  </tr>`).join('');
+}
+
+function showLeadDetail(id) {
+  const lead = (state.leads||[]).find(l=>l.id===id||l.username===id) ||
+               (state.users||[]).find(u=>u.id===id||u.username===id);
+  if(!lead) return;
+  const detail = document.getElementById('lead-detail');
+  const content = document.getElementById('lead-detail-content');
+  content.innerHTML = `
+  <div class="grid grid-cols-2 gap-6">
+    <div>
+      <div class="flex items-center gap-3 mb-3">
+        <div class="w-12 h-12 rounded-full bg-gradient-to-br from-indigo-400 to-purple-600 flex items-center justify-center text-white font-bold">
+          ${(lead.display_name||lead.username).split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase()}
+        </div>
+        <div>
+          <p class="font-bold text-slate-900">${lead.display_name||lead.username}</p>
+          <p class="text-sm text-slate-500">@${lead.username} · ${lead.platform} · ${lead.location||'Chennai'}</p>
+        </div>
+      </div>
+      <p class="text-sm text-slate-600 mb-3">${lead.bio}</p>
+      <div class="grid grid-cols-2 gap-3 text-sm">
+        <div><span class="text-slate-400">Followers:</span> <span class="font-medium">${(lead.follower_count||0).toLocaleString()}</span></div>
+        <div><span class="text-slate-400">Posts:</span> <span class="font-medium">${(lead.post_count||0).toLocaleString()}</span></div>
+        <div><span class="text-slate-400">Best Match:</span> <span class="font-medium text-indigo-600">${lead.best_motivation}</span></div>
+        <div><span class="text-slate-400">Tier:</span> <span class="tier-${lead.tier} text-xs px-2 py-0.5 rounded-full font-medium">${lead.tier.toUpperCase()}</span></div>
+      </div>
+    </div>
+    <div>
+      <p class="text-xs font-semibold text-slate-500 uppercase mb-2">Score Breakdown</p>
+      <div class="space-y-2">
+        <div class="flex items-center gap-2 text-sm"><span class="text-slate-500 w-36">Personality Match</span><div class="flex-1 ocean-bar"><div class="ocean-fill" style="width:${Math.round((lead.personality_match||lead.compatibility_score)*100)}%"></div></div><span class="font-medium w-10 text-right">${Math.round((lead.personality_match||lead.compatibility_score)*100)}%</span></div>
+        <div class="flex items-center gap-2 text-sm"><span class="text-slate-500 w-36">Interest Match</span><div class="flex-1 ocean-bar"><div class="ocean-fill" style="width:${Math.round((lead.interest_match||lead.compatibility_score*0.9)*100)}%"></div></div><span class="font-medium w-10 text-right">${Math.round((lead.interest_match||lead.compatibility_score*0.9)*100)}%</span></div>
+        <div class="flex items-center gap-2 text-sm"><span class="text-slate-500 w-36">Activity Score</span><div class="flex-1 ocean-bar"><div class="ocean-fill" style="width:${Math.round((lead.activity_score||0.7)*100)}%"></div></div><span class="font-medium w-10 text-right">${Math.round((lead.activity_score||0.7)*100)}%</span></div>
+        <div class="flex items-center gap-2 text-sm"><span class="text-slate-500 w-36">LLM Confidence</span><div class="flex-1 ocean-bar"><div class="ocean-fill" style="width:${Math.round((lead.confidence_score||0.75)*100)}%"></div></div><span class="font-medium w-10 text-right">${Math.round((lead.confidence_score||0.75)*100)}%</span></div>
+        <div class="border-t pt-2 mt-2 flex items-center gap-2 text-sm font-bold"><span class="text-slate-700 w-36">Compatibility Score</span><div class="flex-1 h-3 rounded-full bg-slate-200 overflow-hidden"><div class="h-full rounded-full bg-indigo-600" style="width:${Math.round(lead.compatibility_score*100)}%"></div></div><span class="text-indigo-600 w-10 text-right">${Math.round(lead.compatibility_score*100)}%</span></div>
+      </div>
+      <p class="text-xs font-semibold text-slate-500 uppercase mt-4 mb-2">OCEAN Profile</p>
+      <div class="space-y-1.5">
+        ${OCEAN_KEYS.map((k,j)=>`<div class="flex items-center gap-2 text-xs"><span class="text-slate-400 w-28">${OCEAN_LABELS[j]}</span><div class="flex-1 ocean-bar"><div class="ocean-fill" style="width:${((lead.ocean[k]||5)/10)*100}%"></div></div><span class="text-slate-600 w-6 text-right">${(lead.ocean[k]||5).toFixed(1)}</span></div>`).join('')}
+      </div>
+    </div>
+  </div>`;
+  detail.classList.remove('hidden');
+  if(document.getElementById('tab-content-leads').classList.contains('hidden')) showTab('leads');
+}
+
+function renderCharts() {
+  const srcCtx = document.getElementById('source-chart');
+  if(srcCtx) new Chart(srcCtx, { type:'doughnut', data:{ labels:['Instagram','Reddit','Twitter'], datasets:[{data:[412,248,187], backgroundColor:['#ec4899','#f97316','#3b82f6'], borderWidth:0}] }, options:{ plugins:{legend:{position:'bottom',labels:{font:{size:11}}}}, cutout:'65%' } });
+
+  const tierCtx = document.getElementById('tier-chart');
+  if(tierCtx) new Chart(tierCtx, { type:'doughnut', data:{ labels:['Hot','Warm','Cold'], datasets:[{data:[4,4,2], backgroundColor:['#ef4444','#f97316','#3b82f6'], borderWidth:0}] }, options:{ plugins:{legend:{position:'bottom',labels:{font:{size:11}}}}, cutout:'65%' } });
+}
+
+function renderPipelineMini() {
+  const el = document.getElementById('pipeline-mini');
+  el.innerHTML = PIPELINE_STEPS.map((s,i) => `<div class="flex items-center gap-2 text-xs"><div class="w-4 h-4 rounded-full flex-shrink-0 flex items-center justify-center ${i<8?'bg-green-500':'bg-indigo-500'}">${i<PIPELINE_STEPS.length-1?'<svg class="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>':'<svg class="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>'}</div><span class="text-slate-500">${s.label}</span></div>`).join('');
+}
+
+function animateCounters() {
+  document.querySelectorAll('.counter').forEach(el => {
+    const target = parseInt(el.dataset.target);
+    let current = 0;
+    const step = target / 40;
+    const timer = setInterval(() => {
+      current = Math.min(current + step, target);
+      el.textContent = Math.round(current).toLocaleString();
+      if (current >= target) clearInterval(timer);
+    }, 30);
+  });
+}
+
+// ── Tab navigation ────────────────────────────────────────────────────────────
+function showTab(name) {
+  const tabs = ['overview','product','motivations','users','leads'];
+  tabs.forEach(t => {
+    document.getElementById(`tab-content-${t}`)?.classList.add('hidden');
+    document.getElementById(`tab-${t}`)?.classList.remove('bg-indigo-50','text-indigo-600','font-semibold');
+    document.getElementById(`tab-${t}`)?.classList.add('text-slate-700');
+  });
+  document.getElementById(`tab-content-${name}`)?.classList.remove('hidden');
+  const btn = document.getElementById(`tab-${name}`);
+  if(btn) { btn.classList.remove('text-slate-700'); btn.classList.add('bg-indigo-50','text-indigo-600','font-semibold'); }
+}
+
+// ── Pipeline step UI ──────────────────────────────────────────────────────────
+function stepHtml(i, status) {
+  const s = PIPELINE_STEPS[i];
+  const cls = status==='done'?'step-done':status==='active'?'step-active':'step-wait';
+  const icon = status==='done'?'✓':status==='active'?'<span class="animate-pulse">●</span>':String(i+1);
+  return `<div id="step-${i}" class="flex items-center gap-4 p-4 rounded-xl border ${status==='active'?'border-indigo-200 bg-indigo-50':'border-transparent'}">
+    <div class="w-8 h-8 rounded-full ${cls} flex items-center justify-center text-sm font-bold flex-shrink-0">${icon}</div>
+    <div><p class="font-medium text-slate-900 text-sm">${s.label}</p><p class="text-xs text-slate-400">${status==='active'?s.detail:'&nbsp;'}</p></div>
+    ${status==='done'?'<svg class="w-4 h-4 text-green-500 ml-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>':''}
+  </div>`;
+}
+
+function updateStep(i, status) {
+  const el = document.getElementById(`step-${i}`);
+  if(el) el.outerHTML = stepHtml(i, status);
+}
+
+function resetDemo() {
+  state = { demoData: null, running: false, radarCharts: {} };
+  document.getElementById('landing').classList.remove('hidden');
+  document.getElementById('pipeline-view').classList.add('hidden');
+  document.getElementById('dashboard').classList.add('hidden');
+  document.getElementById('status-badge').classList.add('hidden');
+  document.getElementById('run-btn').innerHTML = '<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> Run Demo';
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ── Fallback data (if API unreachable) ────────────────────────────────────────
+const FALLBACK_MOTIVATIONS = [
+  {name:"Aesthetic & Interior Design",description:"These buyers purchase primarily for visual appeal and how the sofa elevates their living space.",ocean:{openness:8.5,conscientiousness:6.0,extraversion:6.5,agreeableness:6.0,emotional_stability:6.5},interest_tags:["interior design","home decor","aesthetics"]},
+  {name:"Luxury & Status Signaling",description:"Motivated by social status, these buyers want their premium sofa to signal success and taste.",ocean:{openness:7.5,conscientiousness:5.5,extraversion:8.0,agreeableness:4.5,emotional_stability:7.0},interest_tags:["luxury lifestyle","premium brands","status"]},
+  {name:"Comfort & Family Living",description:"Practical buyers focused on the whole family's comfort and day-to-day usability.",ocean:{openness:5.5,conscientiousness:8.0,extraversion:4.5,agreeableness:8.5,emotional_stability:7.5},interest_tags:["family home","comfort","practical living"]},
+  {name:"Long-Term Durability Focus",description:"Research-driven buyers who see the sofa as a long-term investment requiring provable quality.",ocean:{openness:6.5,conscientiousness:9.0,extraversion:4.0,agreeableness:6.5,emotional_stability:8.0},interest_tags:["quality","investment","craftsmanship"]},
+  {name:"Modern Design Appreciation",description:"Trend-conscious buyers who follow contemporary design and want their home to reflect cutting-edge taste.",ocean:{openness:8.0,conscientiousness:6.5,extraversion:7.0,agreeableness:5.5,emotional_stability:7.0},interest_tags:["modern design","minimalism","architecture"]},
+];
+const FALLBACK_USERS = [
+  {id:"u1",rank:1,username:"interior_queen_chn",display_name:"Priya Sharma",platform:"instagram",bio:"Interior design enthusiast from Chennai. Transforming spaces into stories. Home Decor Content Creator.",follower_count:12400,post_count:847,location:"Chennai, TN",compatibility_score:0.87,tier:"hot",best_motivation:"Aesthetic & Interior Design",ocean:{openness:8.8,conscientiousness:6.2,extraversion:7.1,agreeableness:6.4,emotional_stability:6.8},personality_match:0.91,interest_match:0.85,activity_score:0.88,confidence_score:0.82},
+  {id:"u2",rank:2,username:"luxury_homes_india",display_name:"Arjun Kapoor",platform:"instagram",bio:"Luxury living redefined. Premium interiors and lifestyle. Chennai & Mumbai.",follower_count:28300,post_count:1243,location:"Chennai",compatibility_score:0.84,tier:"hot",best_motivation:"Luxury & Status Signaling",ocean:{openness:7.8,conscientiousness:5.3,extraversion:8.4,agreeableness:4.2,emotional_stability:7.2},personality_match:0.88,interest_match:0.82,activity_score:0.92,confidence_score:0.79},
+  {id:"u3",rank:3,username:"designstudio_chn",display_name:"Meera Krishnan",platform:"reddit",bio:"Interior designer with 8 years experience. Passionate about sustainable luxury design.",follower_count:5600,post_count:392,location:"Chennai",compatibility_score:0.81,tier:"hot",best_motivation:"Modern Design Appreciation",ocean:{openness:8.3,conscientiousness:7.1,extraversion:6.2,agreeableness:5.8,emotional_stability:7.4},personality_match:0.84,interest_match:0.80,activity_score:0.76,confidence_score:0.85},
+  {id:"u4",rank:4,username:"homedecor_namma",display_name:"Kavitha Rajan",platform:"instagram",bio:"Chennai based home stylist. Follow for weekly interior inspiration.",follower_count:8900,post_count:621,location:"Chennai, TN",compatibility_score:0.78,tier:"hot",best_motivation:"Aesthetic & Interior Design",ocean:{openness:8.1,conscientiousness:6.8,extraversion:5.9,agreeableness:7.2,emotional_stability:6.1},personality_match:0.81,interest_match:0.77,activity_score:0.74,confidence_score:0.78},
+  {id:"u5",rank:5,username:"modernliving_chn",display_name:"Rahul Iyer",platform:"twitter",bio:"Architect and design purist. Chennai. Minimalism over maximalism every time.",follower_count:3200,post_count:1876,location:"Chennai",compatibility_score:0.74,tier:"warm",best_motivation:"Modern Design Appreciation",ocean:{openness:8.6,conscientiousness:7.4,extraversion:5.1,agreeableness:5.4,emotional_stability:7.8},personality_match:0.77,interest_match:0.73,activity_score:0.69,confidence_score:0.81},
+  {id:"u6",rank:6,username:"family_nest_india",display_name:"Sunita Venkat",platform:"reddit",bio:"Mom of two making our Chennai home beautiful. Love great quality furniture that lasts.",follower_count:1800,post_count:243,location:"Chennai",compatibility_score:0.69,tier:"warm",best_motivation:"Comfort & Family Living",ocean:{openness:5.8,conscientiousness:8.2,extraversion:4.3,agreeableness:8.9,emotional_stability:7.6},personality_match:0.71,interest_match:0.68,activity_score:0.64,confidence_score:0.74},
+  {id:"u7",rank:7,username:"craft_quality_ind",display_name:"Suresh Nair",platform:"twitter",bio:"Engineer turned homeowner. Chennai. Obsessed with craftsmanship and things that last 20 years.",follower_count:2100,post_count:934,location:"Chennai",compatibility_score:0.65,tier:"warm",best_motivation:"Long-Term Durability Focus",ocean:{openness:6.4,conscientiousness:9.2,extraversion:3.8,agreeableness:6.7,emotional_stability:8.3},personality_match:0.67,interest_match:0.64,activity_score:0.61,confidence_score:0.76},
+  {id:"u8",rank:8,username:"chennai_homestyle",display_name:"Deepa Murthy",platform:"instagram",bio:"Sharing my home journey. Chennai interior enthusiast and newbie decorator.",follower_count:4300,post_count:287,location:"Chennai",compatibility_score:0.58,tier:"warm",best_motivation:"Aesthetic & Interior Design",ocean:{openness:7.2,conscientiousness:5.9,extraversion:6.8,agreeableness:7.4,emotional_stability:5.8},personality_match:0.60,interest_match:0.57,activity_score:0.55,confidence_score:0.68},
+  {id:"u9",rank:9,username:"premiumbuyer_chn",display_name:"Vikram Anand",platform:"reddit",bio:"Finance professional. Chennai. Believer in buying the best once rather than cheap twice.",follower_count:890,post_count:412,location:"Chennai",compatibility_score:0.51,tier:"cold",best_motivation:"Long-Term Durability Focus",ocean:{openness:6.1,conscientiousness:8.7,extraversion:4.6,agreeableness:5.9,emotional_stability:8.1},personality_match:0.53,interest_match:0.50,activity_score:0.47,confidence_score:0.71},
+  {id:"u10",rank:10,username:"lifestyle_bliss_chn",display_name:"Ananya Bose",platform:"instagram",bio:"Lifestyle blogger covering fashion, food, and home in Chennai.",follower_count:15600,post_count:1923,location:"Chennai",compatibility_score:0.44,tier:"cold",best_motivation:"Comfort & Family Living",ocean:{openness:7.0,conscientiousness:5.1,extraversion:8.2,agreeableness:7.1,emotional_stability:6.3},personality_match:0.46,interest_match:0.43,activity_score:0.71,confidence_score:0.58},
+];
+</script>
+</body>
+</html>
