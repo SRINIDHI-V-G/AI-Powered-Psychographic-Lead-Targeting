@@ -6,19 +6,26 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from sqlalchemy import text
 
-from app.config import settings
+from app.config import settings, warn_missing_credentials
 from app.database import engine
 from app.models.base import Base
-from app.models import Company, Product, MotivationCategory, MotivationOceanProfile  # noqa: F401
+# Import ALL models so create_all registers every table
+from app.models import (  # noqa: F401
+    Company, Product, MotivationCategory, MotivationOceanProfile,
+    DiscoveryJob, DiscoveredUser, UserContent,
+    EnrichmentJob, ProductEnrichmentSignal,
+)
 from app.routers import companies, products, motivations
 from app.routers import demo
 from app.routers import ollama
+from app.routers import discovery
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    warn_missing_credentials()
     yield
     await engine.dispose()
 
@@ -43,6 +50,7 @@ app.include_router(products.router, prefix="/api/v1")
 app.include_router(motivations.router, prefix="/api/v1")
 app.include_router(demo.router, prefix="/api/v1")
 app.include_router(ollama.router, prefix="/api/v1")
+app.include_router(discovery.router, prefix="/api/v1")
 
 STATIC_DIR = Path(__file__).parent.parent / "static"
 

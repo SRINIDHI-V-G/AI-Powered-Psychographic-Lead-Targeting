@@ -22,6 +22,12 @@ class MotivationCategory(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Audit trail: which enrichment signals contributed to this category's
+    # generation. Populated when motivation generation uses enrichment context.
+    # e.g. {"sources": ["amazon"], "top_signals": ["durability", "family"],
+    #        "signal_count": 12}
+    # Empty dict when generated without enrichment (most Phase A products).
+    enrichment_context: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

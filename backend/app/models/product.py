@@ -59,6 +59,12 @@ class Product(Base):
     )
     pipeline_step: Mapped[int] = mapped_column(Integer, default=0)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Tracks whether enrichment signals have been extracted for this product.
+    # Values: none | processing | ready | failed
+    # Populated by the enrichment pipeline (Phase B3).
+    enrichment_status: Mapped[str] = mapped_column(
+        String(20), default="none", nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
