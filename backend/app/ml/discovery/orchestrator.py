@@ -269,6 +269,17 @@ class DiscoveryOrchestrator:
                 _log, job.users_discovered, job.users_content_collected,
             )
 
+            # ── 8. Auto-trigger NLP pipeline ──────────────────────────────────
+            # Only fire if there is content to process.
+            if job.users_content_collected > 0:
+                import asyncio
+                from app.services.nlp_service import start_nlp_background
+                logger.info(
+                    "%s auto-triggering NLP for %d users",
+                    _log, job.users_content_collected,
+                )
+                asyncio.create_task(start_nlp_background(str(product.id)))
+
         except Exception as exc:
             import traceback
             tb = traceback.format_exc()

@@ -3,6 +3,7 @@ from app.models.product import Product, PriceRange, ProductStatus
 from app.models.motivation import MotivationCategory, MotivationOceanProfile
 from app.models.discovery import DiscoveryJob, DiscoveredUser, UserContent
 from app.models.enrichment import EnrichmentJob, ProductEnrichmentSignal
+from app.models.nlp import UserEmbedding, UserNlpFeatures
 
 __all__ = [
     "Company",
@@ -16,4 +17,6 @@ __all__ = [
     "UserContent",
     "EnrichmentJob",
     "ProductEnrichmentSignal",
+    "UserEmbedding",
+    "UserNlpFeatures",
 ]

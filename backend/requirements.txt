@@ -15,3 +15,12 @@ praw==7.7.1
 alembic==1.13.1
 # Synchronous PostgreSQL driver used by Alembic (app still uses asyncpg)
 psycopg2-binary==2.9.9
+
+# ── Phase C: NLP Pipeline ────────────────────────────────────────────────────
+# Sentence-transformer embeddings (all-MiniLM-L6-v2, 384-dim)
+sentence-transformers==2.7.0
+# Empath emotional/topic category lexicon
+empath==0.89
+# Note: spaCy (3.7/3.8) has a pydantic-v1-compat / Python 3.12 conflict.
+# Basic text metrics (entities, vocab richness) are implemented in pure Python.
+# spaCy can be re-evaluated for a future hardening phase.

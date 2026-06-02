@@ -188,6 +188,18 @@ class DiscoveredUser(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    embedding: Mapped["UserEmbedding | None"] = relationship(  # type: ignore[name-defined]  # noqa: F821
+        "UserEmbedding",
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+    nlp_features: Mapped["UserNlpFeatures | None"] = relationship(  # type: ignore[name-defined]  # noqa: F821
+        "UserNlpFeatures",
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
 
 
 # ── User Content ──────────────────────────────────────────────────────────────
