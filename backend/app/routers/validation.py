@@ -26,6 +26,7 @@ from app.crud.validation import (
     get_lead_inspection,
     get_lead_analytics,
     get_leads_for_export,
+    get_leads_summary,
     QUALITY_MIN_CONFIDENCE,
 )
 from app.database import get_db
@@ -47,6 +48,22 @@ _CSV_FIELDS = [
     "interest_tags", "total_tokens",
     "reasoning", "quality_flags",
 ]
+
+
+@router.get(
+    "/products/{product_id}/leads/summary",
+    summary="Lightweight lead summary for dashboard overview cards",
+    description="Single aggregated query: total ranked, avg score, top score, dominant motivation category.",
+)
+async def leads_summary(
+    product_id: UUID,
+    company: Company = Depends(get_current_company),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    product = await get_product_by_id(db, product_id, company.id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found.")
+    return await get_leads_summary(db, product_id)
 
 
 @router.get(

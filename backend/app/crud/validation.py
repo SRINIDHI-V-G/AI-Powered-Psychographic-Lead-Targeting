@@ -13,7 +13,7 @@ from __future__ import annotations
 import statistics as pystats
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.discovery import DiscoveredUser, UserContent
@@ -339,13 +339,19 @@ async def get_lead_analytics(
         return {
             "product_id": str(product_id),
             "total_ranked": 0,
-            "quality_summary": {},
-            "final_score_distribution": _distribution_stats([]),
+            "quality_summary": {
+                "passing_all_filters": 0,
+                "pct_passing": 0.0,
+                "flagged_low_confidence": 0,
+                "flagged_heuristic_ocean": 0,
+                "flagged_insufficient_content": 0,
+                "recommended_min_confidence": QUALITY_MIN_CONFIDENCE,
+            },
+            "final_score_distribution": {**_distribution_stats([]), "histogram": _histogram([])},
             "confidence_distribution": _distribution_stats([]),
             "ocean_score_distribution": _distribution_stats([]),
             "embedding_score_distribution": _distribution_stats([]),
             "interest_score_distribution": _distribution_stats([]),
-            "score_histogram": _histogram([]),
             "top_motivation_categories": [],
             "calibration_notes": ["No ranked leads available for analysis."],
         }
@@ -423,6 +429,46 @@ async def get_lead_analytics(
 
 
 # ── Export ────────────────────────────────────────────────────────────────────
+
+async def get_leads_summary(db: AsyncSession, product_id: UUID) -> dict:
+    """
+    Lightweight aggregate stats for the dashboard product overview card.
+    Single query — avoids loading the full analytics computation on every page.
+    """
+    from sqlalchemy import desc as sa_desc
+
+    agg_r = await db.execute(
+        select(
+            func.count(LeadMatch.id),
+            func.avg(LeadMatch.final_score),
+            func.max(LeadMatch.final_score),
+        ).where(
+            LeadMatch.product_id == product_id,
+            LeadMatch.is_best_match == True,  # noqa: E712
+        )
+    )
+    count, avg, top = agg_r.one()
+
+    cat_r = await db.execute(
+        select(MotivationCategory.name, func.count(LeadMatch.id).label("cnt"))
+        .join(LeadMatch, LeadMatch.motivation_category_id == MotivationCategory.id)
+        .where(
+            LeadMatch.product_id == product_id,
+            LeadMatch.is_best_match == True,  # noqa: E712
+        )
+        .group_by(MotivationCategory.name)
+        .order_by(sa_desc("cnt"))
+        .limit(1)
+    )
+    top_cat_row = cat_r.first()
+
+    return {
+        "total_ranked": int(count) if count else 0,
+        "avg_score": round(float(avg), 1) if avg else None,
+        "top_score": round(float(top), 1) if top else None,
+        "top_category": top_cat_row[0] if top_cat_row else None,
+    }
+
 
 async def get_leads_for_export(
     db: AsyncSession,

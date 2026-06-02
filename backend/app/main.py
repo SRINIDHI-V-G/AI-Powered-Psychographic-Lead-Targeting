@@ -74,6 +74,11 @@ async def serve_demo_alias():
     return FileResponse(STATIC_DIR / "demo.html")
 
 
+@app.get("/dashboard", include_in_schema=False)
+async def serve_dashboard():
+    return FileResponse(STATIC_DIR / "dashboard.html")
+
+
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
