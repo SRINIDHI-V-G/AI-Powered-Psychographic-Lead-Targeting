@@ -4,11 +4,15 @@ No authentication required. All endpoints return realistic mock data instantly.
 """
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import HTMLResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from pathlib import Path
 
 from app.database import get_db
+from app.models.discovery import DiscoveryJob, DiscoveredUser, UserContent
+from app.models.matching import LeadMatch
+from app.models.motivation import MotivationCategory
+from app.models.nlp import UserNlpFeatures
+from app.models.ocean import UserOceanScore
 from app.models.product import Product, ProductStatus
 from app.schemas.company import CompanyCreate
 from app.schemas.product import ProductCreate
@@ -74,20 +78,52 @@ MOCK_USERS = [
     {"id": "u2", "rank": 2, "username": "luxury_homes_india", "display_name": "Arjun Kapoor", "platform": "instagram", "bio": "Luxury living redefined. Premium interiors and lifestyle content. Chennai & Mumbai. DM for collaborations.", "follower_count": 28300, "post_count": 1243, "location": "Chennai", "compatibility_score": 0.84, "tier": "hot", "best_motivation": "Luxury & Status Signaling", "ocean": {"openness": 7.8, "conscientiousness": 5.3, "extraversion": 8.4, "agreeableness": 4.2, "emotional_stability": 7.2}, "personality_match": 0.88, "interest_match": 0.82, "activity_score": 0.92, "confidence_score": 0.79},
     {"id": "u3", "rank": 3, "username": "designstudio_chn", "display_name": "Meera Krishnan", "platform": "reddit", "bio": "Interior designer with 8 years experience. Passionate about sustainable luxury and timeless design. Based in Chennai.", "follower_count": 5600, "post_count": 392, "location": "Chennai", "compatibility_score": 0.81, "tier": "hot", "best_motivation": "Modern Design Appreciation", "ocean": {"openness": 8.3, "conscientiousness": 7.1, "extraversion": 6.2, "agreeableness": 5.8, "emotional_stability": 7.4}, "personality_match": 0.84, "interest_match": 0.80, "activity_score": 0.76, "confidence_score": 0.85},
     {"id": "u4", "rank": 4, "username": "homedecor_namma", "display_name": "Kavitha Rajan", "platform": "instagram", "bio": "Chennai based home stylist. Cozy homes on any budget. Follow for weekly interior inspiration and honest reviews.", "follower_count": 8900, "post_count": 621, "location": "Chennai, TN", "compatibility_score": 0.78, "tier": "hot", "best_motivation": "Aesthetic & Interior Design", "ocean": {"openness": 8.1, "conscientiousness": 6.8, "extraversion": 5.9, "agreeableness": 7.2, "emotional_stability": 6.1}, "personality_match": 0.81, "interest_match": 0.77, "activity_score": 0.74, "confidence_score": 0.78},
-    {"id": "u5", "rank": 5, "username": "modernliving_chn", "display_name": "Rahul Iyer", "platform": "twitter", "bio": "Architect and design purist based in Chennai. Minimalism over maximalism every time. Writing about modern spaces.", "follower_count": 3200, "post_count": 1876, "location": "Chennai", "compatibility_score": 0.74, "tier": "warm", "best_motivation": "Modern Design Appreciation", "ocean": {"openness": 8.6, "conscientiousness": 7.4, "extraversion": 5.1, "agreeableness": 5.4, "emotional_stability": 7.8}, "personality_match": 0.77, "interest_match": 0.73, "activity_score": 0.69, "confidence_score": 0.81},
+    {"id": "u5", "rank": 5, "username": "modernliving_chn", "display_name": "Rahul Iyer", "platform": "reddit", "bio": "Architect and design purist based in Chennai. Minimalism over maximalism every time. Writing about modern spaces.", "follower_count": 3200, "post_count": 1876, "location": "Chennai", "compatibility_score": 0.74, "tier": "warm", "best_motivation": "Modern Design Appreciation", "ocean": {"openness": 8.6, "conscientiousness": 7.4, "extraversion": 5.1, "agreeableness": 5.4, "emotional_stability": 7.8}, "personality_match": 0.77, "interest_match": 0.73, "activity_score": 0.69, "confidence_score": 0.81},
     {"id": "u6", "rank": 6, "username": "family_nest_india", "display_name": "Sunita Venkat", "platform": "reddit", "bio": "Mom of two making our Chennai home beautiful. Love finding great quality furniture that actually lasts.", "follower_count": 1800, "post_count": 243, "location": "Chennai, India", "compatibility_score": 0.69, "tier": "warm", "best_motivation": "Comfort & Family Living", "ocean": {"openness": 5.8, "conscientiousness": 8.2, "extraversion": 4.3, "agreeableness": 8.9, "emotional_stability": 7.6}, "personality_match": 0.71, "interest_match": 0.68, "activity_score": 0.64, "confidence_score": 0.74},
-    {"id": "u7", "rank": 7, "username": "craft_quality_ind", "display_name": "Suresh Nair", "platform": "twitter", "bio": "Engineer turned homeowner. Chennai. Obsessed with craftsmanship, build quality, and things that last 20 years.", "follower_count": 2100, "post_count": 934, "location": "Chennai", "compatibility_score": 0.65, "tier": "warm", "best_motivation": "Long-Term Durability Focus", "ocean": {"openness": 6.4, "conscientiousness": 9.2, "extraversion": 3.8, "agreeableness": 6.7, "emotional_stability": 8.3}, "personality_match": 0.67, "interest_match": 0.64, "activity_score": 0.61, "confidence_score": 0.76},
+    {"id": "u7", "rank": 7, "username": "craft_quality_ind", "display_name": "Suresh Nair", "platform": "reddit", "bio": "Engineer turned homeowner. Chennai. Obsessed with craftsmanship, build quality, and things that last 20 years.", "follower_count": 2100, "post_count": 934, "location": "Chennai", "compatibility_score": 0.65, "tier": "warm", "best_motivation": "Long-Term Durability Focus", "ocean": {"openness": 6.4, "conscientiousness": 9.2, "extraversion": 3.8, "agreeableness": 6.7, "emotional_stability": 8.3}, "personality_match": 0.67, "interest_match": 0.64, "activity_score": 0.61, "confidence_score": 0.76},
     {"id": "u8", "rank": 8, "username": "chennai_homestyle", "display_name": "Deepa Murthy", "platform": "instagram", "bio": "Sharing my home journey from empty apartment to dream home. Chennai interior enthusiast and newbie decorator.", "follower_count": 4300, "post_count": 287, "location": "Chennai", "compatibility_score": 0.58, "tier": "warm", "best_motivation": "Aesthetic & Interior Design", "ocean": {"openness": 7.2, "conscientiousness": 5.9, "extraversion": 6.8, "agreeableness": 7.4, "emotional_stability": 5.8}, "personality_match": 0.60, "interest_match": 0.57, "activity_score": 0.55, "confidence_score": 0.68},
     {"id": "u9", "rank": 9, "username": "premiumbuyer_chn", "display_name": "Vikram Anand", "platform": "reddit", "bio": "Finance professional in Chennai. Strong believer in buying the best once rather than cheap twice.", "follower_count": 890, "post_count": 412, "location": "Chennai, TN", "compatibility_score": 0.51, "tier": "cold", "best_motivation": "Long-Term Durability Focus", "ocean": {"openness": 6.1, "conscientiousness": 8.7, "extraversion": 4.6, "agreeableness": 5.9, "emotional_stability": 8.1}, "personality_match": 0.53, "interest_match": 0.50, "activity_score": 0.47, "confidence_score": 0.71},
     {"id": "u10", "rank": 10, "username": "lifestyle_bliss_chn", "display_name": "Ananya Bose", "platform": "instagram", "bio": "Lifestyle blogger covering fashion, food, and home in Chennai. Collab inquiries welcome.", "follower_count": 15600, "post_count": 1923, "location": "Chennai", "compatibility_score": 0.44, "tier": "cold", "best_motivation": "Comfort & Family Living", "ocean": {"openness": 7.0, "conscientiousness": 5.1, "extraversion": 8.2, "agreeableness": 7.1, "emotional_stability": 6.3}, "personality_match": 0.46, "interest_match": 0.43, "activity_score": 0.71, "confidence_score": 0.58},
 ]
 
+# Empath signal buckets per motivation category
+_EMPATH_SIGNALS = {
+    "Aesthetic & Interior Design": {"art": 0.18, "beauty": 0.16, "home": 0.22, "fashion": 0.12, "visual": 0.14, "positive_emotion": 0.10, "creative": 0.15, "achievement": 0.08},
+    "Luxury & Status Signaling":   {"achievement": 0.20, "wealth": 0.22, "fashion": 0.18, "status": 0.24, "positive_emotion": 0.12, "power": 0.16, "social": 0.10},
+    "Comfort & Family Living":     {"home": 0.25, "family": 0.28, "positive_emotion": 0.18, "help": 0.14, "care": 0.16, "comfort": 0.20, "trust": 0.12},
+    "Long-Term Durability Focus":  {"achievement": 0.16, "trust": 0.20, "work": 0.18, "money": 0.14, "math": 0.12, "science": 0.10, "technology": 0.14, "quality": 0.22},
+    "Modern Design Appreciation":  {"art": 0.16, "creative": 0.20, "technology": 0.14, "future": 0.12, "beauty": 0.14, "achievement": 0.12, "visual": 0.18, "fashion": 0.10},
+}
+
+_SAMPLE_POSTS = {
+    "Aesthetic & Interior Design": [
+        "Just finished redecorating my living room. The key is balancing textures — linen, velvet, and natural wood all in one cohesive palette. The new sofa is the anchor piece.",
+        "Interior design tip: always invest in your seating first. Everything else follows. A beautiful sofa sets the tone for the entire room's personality.",
+    ],
+    "Luxury & Status Signaling": [
+        "Upgraded the living room with Italian leather. The craftsmanship is unreal — every stitch is perfect. This is what separates premium from ordinary.",
+        "When people walk into my home and see the furniture, the reaction says it all. Quality speaks louder than any price tag.",
+    ],
+    "Comfort & Family Living": [
+        "Finally found a sofa that survives two kids and a dog AND still looks good after 3 years. Durability is non-negotiable for a family home.",
+        "Sunday mornings on the couch with the whole family. This is why we spent months choosing the right sofa — it's the heart of our home.",
+    ],
+    "Long-Term Durability Focus": [
+        "Spent 6 weeks researching before buying. Compared frame construction, cushion density, fabric thread count. The data doesn't lie — quality costs more upfront but saves in the long run.",
+        "3 years in and zero wear on the frame or cushions. This is what a 25-year sofa looks like. Do your research before you buy.",
+    ],
+    "Modern Design Appreciation": [
+        "Clean lines, neutral palette, negative space. The Scandinavian approach to living rooms is timeless. My new sofa fits perfectly into the minimal aesthetic.",
+        "Less is more. I removed three pieces of furniture this month and the room finally breathes. Good design is about what you leave out.",
+    ],
+}
+
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
-@router.post("/setup", summary="One-click demo: create company + product + run full pipeline")
+@router.post("/setup", summary="One-click demo: create company + product + seed full pipeline data")
 async def setup_demo(db: AsyncSession = Depends(get_db)):
-    # Reuse existing demo company if it exists
+    # ── 1. Get or create demo company ────────────────────────────────────────
     company = await get_company_by_email(db, DEMO_EMAIL)
     if not company:
         company = await create_company(db, CompanyCreate(
@@ -96,29 +132,43 @@ async def setup_demo(db: AsyncSession = Depends(get_db)):
             industry="Furniture & Home Decor",
         ))
 
-    # Create product
-    product = await create_product(
-        db,
-        ProductCreate(
-            name="Premium Sofa",
-            description=(
-                "Handcrafted 3-seater premium sofa with full-grain Italian leather "
-                "and solid oak frame. The centrepiece for any luxury living room in Chennai."
-            ),
-            category="Furniture",
-            subcategory="Sofas",
-            price_range="premium",
-            target_location="Chennai, Tamil Nadu",
-            target_city="Chennai",
-            keywords=["sofa", "furniture", "interior design", "home decor", "leather"],
-        ),
-        company.id,
+    # ── 2. Find the SINGLE demo product (reuse if exists) ────────────────────
+    result = await db.execute(
+        select(Product)
+        .where(Product.company_id == company.id, Product.name == "Premium Sofa")
+        .order_by(Product.created_at.desc())
+        .limit(1)
     )
+    product = result.scalar_one_or_none()
 
-    # Instantly create mock motivations in DB
-    await _seed_mock_motivations(db, product.id)
+    if not product:
+        product = await create_product(
+            db,
+            ProductCreate(
+                name="Premium Sofa",
+                description=(
+                    "Handcrafted 3-seater premium sofa with full-grain Italian leather "
+                    "and solid oak frame. The centrepiece for any luxury living room in Chennai."
+                ),
+                category="Furniture",
+                subcategory="Sofas",
+                price_range="premium",
+                target_location="Chennai, Tamil Nadu",
+                target_city="Chennai",
+                keywords=["sofa", "furniture", "interior design", "home decor", "leather"],
+            ),
+            company.id,
+        )
 
-    # Mark pipeline complete
+    # ── 3. Seed pipeline data only if not already done ───────────────────────
+    existing_leads = await db.execute(
+        select(LeadMatch).where(LeadMatch.product_id == product.id).limit(1)
+    )
+    if not existing_leads.scalar_one_or_none():
+        await _seed_mock_motivations(db, product.id)
+        await _seed_demo_leads(db, product.id)
+
+    # ── 4. Mark pipeline complete ─────────────────────────────────────────────
     product.status = ProductStatus.completed
     product.pipeline_step = 9
     await db.commit()
@@ -212,3 +262,143 @@ async def _seed_mock_motivations(db, product_id) -> None:
             },
         )
     await db.commit()
+
+
+async def _seed_demo_leads(db, product_id) -> None:
+    """
+    Insert DiscoveredUsers + NLP + OCEAN + LeadMatch records so the real
+    /products/{id}/leads and /leads/summary endpoints return actual data.
+    Called once per demo product (guarded by the caller).
+    """
+    # Get motivation category IDs (seeded just before this call)
+    cats_result = await db.execute(
+        select(MotivationCategory).where(MotivationCategory.product_id == product_id)
+    )
+    cat_map: dict[str, UUID] = {c.name: c.id for c in cats_result.scalars().all()}
+
+    # Create one discovery job to parent all demo users
+    job = DiscoveryJob(
+        product_id=product_id,
+        provider_name="demo",
+        status="completed",
+        sources=["demo"],
+        search_config={},
+        max_users=10,
+        users_discovered=10,
+        users_content_collected=10,
+    )
+    db.add(job)
+    await db.flush()
+
+    for mu in MOCK_USERS:
+        o = mu["ocean"]
+
+        # ── DiscoveredUser ────────────────────────────────────────────────────
+        user = DiscoveredUser(
+            discovery_job_id=job.id,
+            product_id=product_id,
+            platform=mu["platform"],
+            source_provider="demo",
+            platform_user_id=mu["id"],
+            username=mu["username"],
+            display_name=mu["display_name"],
+            bio=mu["bio"],
+            location=mu["location"],
+            location_confidence="confirmed",
+            follower_count=mu["follower_count"],
+            post_count=mu["post_count"],
+            profile_url=f"https://{mu['platform']}.com/u/{mu['username']}",
+            content_collected=True,
+            nlp_processed=True,
+            ocean_scored=True,
+            matched=True,
+        )
+        db.add(user)
+        await db.flush()
+
+        # ── UserContent — bio ─────────────────────────────────────────────────
+        db.add(UserContent(
+            user_id=user.id,
+            content_type="bio",
+            content_text=mu["bio"],
+            engagement=0,
+        ))
+
+        # ── UserContent — sample posts ────────────────────────────────────────
+        posts = _SAMPLE_POSTS.get(mu["best_motivation"], [])
+        for i, text in enumerate(posts):
+            db.add(UserContent(
+                user_id=user.id,
+                content_type="post",
+                content_text=text,
+                engagement=int(mu["follower_count"] * 0.03 * (1 - i * 0.3)),
+            ))
+
+        # ── UserNlpFeatures ───────────────────────────────────────────────────
+        empath = _EMPATH_SIGNALS.get(mu["best_motivation"], {})
+        interest_tags = list(empath.keys())[:6]
+        db.add(UserNlpFeatures(
+            user_id=user.id,
+            empath_scores=empath,
+            interest_tags=interest_tags,
+            bertopic_topics=[],
+            bertopic_probs=[],
+            spacy_entities=[{"text": mu["location"].split(",")[0], "label": "GPE"}],
+            keyword_frequency={t: round(v * 10, 1) for t, v in list(empath.items())[:5]},
+            vocabulary_richness=round(0.65 + mu["personality_match"] * 0.15, 3),
+            avg_sentence_length=round(12.0 + mu["activity_score"] * 8, 1),
+            total_tokens=int(len(mu["bio"].split()) * (1 + len(posts)) * 2.5),
+        ))
+
+        # ── UserOceanScore ────────────────────────────────────────────────────
+        # Convert 0-10 scale → 0-100; neuroticism = 100 - (emotional_stability×10)
+        db.add(UserOceanScore(
+            user_id=user.id,
+            openness=o["openness"] * 10,
+            conscientiousness=o["conscientiousness"] * 10,
+            extraversion=o["extraversion"] * 10,
+            agreeableness=o["agreeableness"] * 10,
+            neuroticism=round(100 - o["emotional_stability"] * 10, 1),
+            confidence=round(mu["confidence_score"] * 100, 1),
+            scoring_method="llm",
+            reasoning={
+                "openness": f"Content shows strong aesthetic curiosity and creative interest (score: {o['openness']:.1f}/10)",
+                "conscientiousness": f"Posts reflect {'high' if o['conscientiousness'] > 7 else 'moderate'} organisation and research before decisions",
+            },
+        ))
+
+        # ── LeadMatch — one per motivation category ───────────────────────────
+        best_cat = mu["best_motivation"]
+        for cat_name, cat_id in cat_map.items():
+            is_best = cat_name == best_cat
+            # Non-best categories score lower with deterministic variation
+            factor = 1.0 if is_best else 0.62 + (sum(ord(c) for c in cat_name) % 20) / 100
+            db.add(LeadMatch(
+                product_id=product_id,
+                user_id=user.id,
+                motivation_category_id=cat_id,
+                ocean_score=round(mu["personality_match"] * 100 * factor, 2),
+                embedding_score=round(mu["activity_score"] * 100 * factor, 2),
+                interest_score=round(mu["interest_match"] * 100 * factor, 2),
+                final_score=round(mu["compatibility_score"] * 100 * factor, 2),
+                confidence=round(mu["confidence_score"] * 100, 1),
+                is_best_match=is_best,
+                rank=mu["rank"] if is_best else None,
+                reasoning=_reasoning(mu, cat_name, is_best),
+            ))
+
+    await db.commit()
+
+
+def _reasoning(mu: dict, cat_name: str, is_best: bool) -> list[str]:
+    reasons = []
+    o = mu["ocean"]
+    if is_best:
+        reasons.append(f"Personality profile strongly aligns with '{cat_name}' buyer archetype.")
+        reasons.append(f"Openness {o['openness']:.1f}/10 and interest signals confirm category fit.")
+        if mu["follower_count"] > 5000:
+            reasons.append(f"High follower count ({mu['follower_count']:,}) indicates strong social influence.")
+        reasons.append(f"Confidence score {mu['confidence_score']*100:.0f}/100 — reliable OCEAN inference from sufficient content.")
+    else:
+        reasons.append(f"Secondary match: some overlap with '{cat_name}' but primary category is stronger.")
+    return reasons

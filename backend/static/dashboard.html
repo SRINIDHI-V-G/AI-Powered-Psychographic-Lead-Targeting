@@ -406,7 +406,7 @@ async function loadProducts() {
 async function renderProductCard(p) {
   let summary = { total_ranked: '—', avg_score: null, top_category: null };
   try { summary = await apiGet(`/products/${p.id}/leads/summary`); } catch(_) {}
-  const progress = Math.round(p.pipeline_step / 8 * 100);
+  const progress = Math.min(Math.round(p.pipeline_step / 8 * 100), 100);
   return `
   <div class="card p-5 hover:shadow-md transition-shadow cursor-pointer" onclick="showProduct('${p.id}')">
     <div class="flex items-start justify-between mb-3">
