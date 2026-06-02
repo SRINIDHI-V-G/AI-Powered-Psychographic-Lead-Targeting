@@ -92,13 +92,25 @@ async def list_leads(
     page: int = Query(1, ge=1, description="Page number (1-based)"),
     page_size: int = Query(20, ge=1, le=100, description="Results per page"),
     min_score: float = Query(0.0, ge=0.0, le=100.0, description="Minimum final score"),
+    min_confidence: float = Query(
+        0.0, ge=0.0, le=100.0,
+        description="Minimum match confidence (set to 40 to exclude low-content users)",
+    ),
+    sort: str = Query(
+        "top", pattern="^(top|bottom)$",
+        description="Sort direction: 'top' for best leads first, 'bottom' for worst leads first",
+    ),
     company: Company = Depends(get_current_company),
     db: AsyncSession = Depends(get_db),
 ) -> LeadListResponse:
     product = await get_product_by_id(db, product_id, company.id)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found.")
-    result = await get_ranked_leads(db, product_id, page=page, page_size=page_size, min_score=min_score)
+    result = await get_ranked_leads(
+        db, product_id,
+        page=page, page_size=page_size,
+        min_score=min_score, min_confidence=min_confidence, sort=sort,
+    )
     return LeadListResponse(**result)
 
 

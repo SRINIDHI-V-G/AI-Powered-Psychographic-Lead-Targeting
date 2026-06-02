@@ -58,38 +58,48 @@ async def get_ranked_leads(
     page: int = 1,
     page_size: int = 20,
     min_score: float = 0.0,
+    min_confidence: float = 0.0,
+    sort: str = "top",
 ) -> dict:
     """
     Return paginated ranked lead list for a product.
-    Only includes best-match rows (is_best_match=True), ordered by rank.
+    Only includes best-match rows (is_best_match=True).
+
+    sort="top"    — ordered by rank ascending (best leads first)
+    sort="bottom" — ordered by rank descending (worst leads first, useful for validation)
     """
     page = max(1, page)
     page_size = max(1, min(100, page_size))
     offset = (page - 1) * page_size
 
-    # Count total ranked leads meeting min_score
+    filters = [
+        LeadMatch.product_id == product_id,
+        LeadMatch.is_best_match == True,  # noqa: E712
+        LeadMatch.final_score >= min_score,
+        LeadMatch.confidence >= min_confidence,
+    ]
+
+    # Count total ranked leads meeting filters
     count_r = await db.execute(
         select(func.count())
         .select_from(LeadMatch)
-        .where(
-            LeadMatch.product_id == product_id,
-            LeadMatch.is_best_match == True,  # noqa: E712
-            LeadMatch.final_score >= min_score,
-        )
+        .where(*filters)
     )
     total = count_r.scalar_one()
+
+    order_clause = (
+        LeadMatch.rank.asc().nullslast()
+        if sort == "top"
+        else LeadMatch.rank.desc().nullsfirst()
+    )
 
     # Fetch page of leads with user + motivation info
     result = await db.execute(
         select(LeadMatch, DiscoveredUser, MotivationCategory)
         .join(DiscoveredUser, LeadMatch.user_id == DiscoveredUser.id)
         .join(MotivationCategory, LeadMatch.motivation_category_id == MotivationCategory.id)
-        .where(
-            LeadMatch.product_id == product_id,
-            LeadMatch.is_best_match == True,  # noqa: E712
-            LeadMatch.final_score >= min_score,
-        )
-        .order_by(LeadMatch.rank.asc().nullslast())
+        .where(*filters)
+        .order_by(order_clause)
         .offset(offset)
         .limit(page_size)
     )

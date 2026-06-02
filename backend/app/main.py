@@ -23,6 +23,7 @@ from app.routers import discovery
 from app.routers import nlp
 from app.routers import ocean
 from app.routers import matching
+from app.routers import validation
 
 
 @asynccontextmanager
@@ -57,6 +58,7 @@ app.include_router(ollama.router, prefix="/api/v1")
 app.include_router(discovery.router, prefix="/api/v1")
 app.include_router(nlp.router, prefix="/api/v1")
 app.include_router(ocean.router, prefix="/api/v1")
+app.include_router(validation.router, prefix="/api/v1")
 app.include_router(matching.router, prefix="/api/v1")
 
 STATIC_DIR = Path(__file__).parent.parent / "static"
