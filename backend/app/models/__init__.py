@@ -5,6 +5,7 @@ from app.models.discovery import DiscoveryJob, DiscoveredUser, UserContent
 from app.models.enrichment import EnrichmentJob, ProductEnrichmentSignal
 from app.models.nlp import UserEmbedding, UserNlpFeatures
 from app.models.ocean import UserOceanScore
+from app.models.matching import LeadMatch
 
 __all__ = [
     "Company",
@@ -21,4 +22,5 @@ __all__ = [
     "UserEmbedding",
     "UserNlpFeatures",
     "UserOceanScore",
+    "LeadMatch",
 ]

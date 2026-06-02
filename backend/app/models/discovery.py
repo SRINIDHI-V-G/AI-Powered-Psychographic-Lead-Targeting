@@ -206,6 +206,11 @@ class DiscoveredUser(Base):
         uselist=False,
         cascade="all, delete-orphan",
     )
+    lead_matches: Mapped[list["LeadMatch"]] = relationship(  # type: ignore[name-defined]  # noqa: F821
+        "LeadMatch",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
 
 # ── User Content ──────────────────────────────────────────────────────────────

@@ -280,6 +280,16 @@ async def start_ocean_background(product_id: str) -> None:
                 _log, summary["processed"], summary["failed"],
             )
 
+            # ── Auto-trigger matching ─────────────────────────────────────────
+            if summary["processed"] > 0:
+                import asyncio
+                from app.services.matching_service import start_matching_background
+                logger.info(
+                    "%s auto-triggering matching for %d users",
+                    _log, summary["processed"],
+                )
+                asyncio.create_task(start_matching_background(product_id))
+
         except Exception as exc:
             tb = traceback.format_exc()
             logger.exception("%s FAILED: %s", _log, exc)
