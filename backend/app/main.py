@@ -12,6 +12,7 @@ from app.models.base import Base
 from app.models import Company, Product, MotivationCategory, MotivationOceanProfile  # noqa: F401
 from app.routers import companies, products, motivations
 from app.routers import demo
+from app.routers import ollama
 
 
 @asynccontextmanager
@@ -41,6 +42,7 @@ app.include_router(companies.router, prefix="/api/v1")
 app.include_router(products.router, prefix="/api/v1")
 app.include_router(motivations.router, prefix="/api/v1")
 app.include_router(demo.router, prefix="/api/v1")
+app.include_router(ollama.router, prefix="/api/v1")
 
 STATIC_DIR = Path(__file__).parent.parent / "static"
 

@@ -49,3 +49,14 @@ class ProductResponse(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ProductStatusResponse(BaseModel):
+    """Lightweight schema for the /products/{id}/status poll endpoint."""
+    id: UUID
+    status: ProductStatus
+    pipeline_step: int
+    error_message: str | None
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
