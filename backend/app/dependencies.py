@@ -6,13 +6,18 @@ from app.crud.company import get_company_by_api_key
 
 
 async def get_current_company(
-    x_api_key: str = Header(..., description="Your company API key from registration"),
+    x_api_key: str | None = Header(None, description="Your company API key from registration"),
     db: AsyncSession = Depends(get_db),
 ) -> Company:
+    if not x_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API key required. Pass it as X-API-Key header.",
+        )
     company = await get_company_by_api_key(db, x_api_key)
     if not company:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing API key.",
+            detail="Invalid API key.",
         )
     return company

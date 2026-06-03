@@ -1,5 +1,4 @@
 import uuid
-import secrets
 from datetime import datetime
 from sqlalchemy import String, Boolean, Text, DateTime, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -25,12 +24,13 @@ class Company(Base):
     industry: Mapped[str | None] = mapped_column(String(100), nullable=True)
     website: Mapped[str | None] = mapped_column(String(500), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Stores SHA-256 hex digest of the raw key (64 chars).
+    # The plaintext key is returned once at registration and never stored.
     api_key: Mapped[str] = mapped_column(
         String(64),
         unique=True,
         nullable=False,
         index=True,
-        default=lambda: secrets.token_hex(32),
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(

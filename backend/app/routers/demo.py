@@ -2,6 +2,8 @@
 Demo router — instant full-pipeline simulation for live demos.
 No authentication required. All endpoints return realistic mock data instantly.
 """
+import hashlib
+import secrets
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -126,11 +128,19 @@ async def setup_demo(db: AsyncSession = Depends(get_db)):
     # ── 1. Get or create demo company ────────────────────────────────────────
     company = await get_company_by_email(db, DEMO_EMAIL)
     if not company:
-        company = await create_company(db, CompanyCreate(
+        # First run: create_company returns (raw_key, company) — unpack correctly.
+        raw_key, company = await create_company(db, CompanyCreate(
             name="Comfort Furniture India",
             email=DEMO_EMAIL,
             industry="Furniture & Home Decor",
         ))
+    else:
+        # Company already exists. We cannot recover the original plaintext key from
+        # the stored SHA-256 hash, so reset it with a fresh key every time the demo
+        # is set up. This guarantees the frontend always receives a usable plaintext key.
+        raw_key = secrets.token_hex(32)
+        company.api_key = hashlib.sha256(raw_key.encode()).hexdigest()
+        await db.commit()
 
     # ── 2. Find the SINGLE demo product (reuse if exists) ────────────────────
     result = await db.execute(
@@ -175,7 +185,7 @@ async def setup_demo(db: AsyncSession = Depends(get_db)):
 
     return {
         "company_id": str(company.id),
-        "api_key": company.api_key,
+        "api_key": raw_key,          # plaintext key — usable directly as X-API-Key header
         "product_id": str(product.id),
         "product_name": product.name,
         "target_location": product.target_location,

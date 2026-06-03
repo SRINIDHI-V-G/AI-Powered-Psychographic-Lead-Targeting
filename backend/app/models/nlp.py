@@ -4,12 +4,13 @@ NLP layer models.
 UserEmbedding   — sentence-transformer vector for a discovered user
 UserNlpFeatures — extracted NLP signals: Empath, spaCy, linguistic metrics
 
-These rows feed directly into OCEAN scoring and the matching engine.
-They are computed once per user and updated only if content is re-collected.
+Embedding storage strategy (dual-column for zero-downtime migration):
+  embedding        — JSONB list-of-floats (384 dims) — backward compat, always populated
+  embedding_vector — pgvector VECTOR(384) — populated by migration 005 and all new writes
 
-Embedding storage: JSONB list-of-floats (384 dimensions, all-MiniLM-L6-v2).
-Using JSONB instead of pgvector keeps the setup dependency-free.
-Migration to VECTOR(384) is a simple ALTER TABLE when pgvector is available (Phase G).
+The matching engine uses embedding_vector when available and falls back to the JSONB
+column.  Once all rows have embedding_vector populated (after migration 005 data backfill),
+the JSONB column can be dropped in a future migration.
 """
 from __future__ import annotations
 
@@ -29,6 +30,15 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
+
+try:
+    from pgvector.sqlalchemy import Vector as _Vector
+    _VECTOR_TYPE = _Vector(384)
+    _HAS_PGVECTOR = True
+except ImportError:
+    _Vector = None
+    _VECTOR_TYPE = JSONB          # fallback — won't be used as a real vector column
+    _HAS_PGVECTOR = False
 
 
 class UserEmbedding(Base):
@@ -55,10 +65,18 @@ class UserEmbedding(Base):
     # "combined" — bio + posts + comments concatenated (default and only type for Phase C)
     embedding_type: Mapped[str] = mapped_column(String(20), default="combined", nullable=False)
 
-    # 384-element list of floats stored as JSONB.
-    # Schema: [float, float, ...] — exactly 384 elements.
-    # All embeddings are L2-normalised (unit vectors) so dot product == cosine similarity.
+    # JSONB fallback — always populated for backward compatibility.
+    # Schema: [float, float, ...] — exactly 384 L2-normalised floats.
     embedding: Mapped[list] = mapped_column(JSONB, nullable=False)
+
+    # pgvector native column — populated from migration 005 onward.
+    # Uses pgvector VECTOR(384) when pgvector package is installed; falls back
+    # to nullable JSONB otherwise so the app boots without the extension.
+    # The Alembic migration creates this as VECTOR(384) in the database.
+    embedding_vector: Mapped[list | None] = mapped_column(
+        _VECTOR_TYPE,   # Vector(384) or JSONB depending on installation
+        nullable=True,
+    )
 
     model_used: Mapped[str] = mapped_column(
         String(100), default="all-MiniLM-L6-v2", nullable=False

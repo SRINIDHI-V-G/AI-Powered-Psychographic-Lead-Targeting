@@ -1,0 +1,114 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  AI-Powered Psychographic Lead Intelligence Platform
+#  Full local development stack
+#
+#  Usage:
+#    docker-compose up -d          # start everything
+#    docker-compose up api         # start only the API
+#    docker-compose logs -f worker # follow Celery worker logs
+#
+#  After first boot:
+#    docker-compose exec api alembic upgrade head   # run migrations
+#
+#  Ollama is NOT included — run it separately on a GPU machine or Oracle VM.
+#  Set OLLAMA_BASE_URL in backend/.env to point to your Ollama instance.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── PostgreSQL 16 with pgvector extension ──────────────────────────────────
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: psycholead_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: psycholead
+      POSTGRES_PASSWORD: psycholead_dev
+      POSTGRES_DB: psycholead
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U psycholead -d psycholead"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis 7 (Celery broker + result backend + rate-limit persistence) ───────
+  redis:
+    image: redis:7-alpine
+    container_name: psycholead_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── FastAPI backend ────────────────────────────────────────────────────────
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: psycholead_api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://psycholead:psycholead_dev@db:5432/psycholead
+      REDIS_URL: redis://redis:6379/0
+      USE_CELERY: "true"
+      ENVIRONMENT: development
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app        # hot-reload in dev
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --reload
+      --reload-dir /app/app
+
+  # ── Celery worker ─────────────────────────────────────────────────────────
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: psycholead_worker
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://psycholead:psycholead_dev@db:5432/psycholead
+      REDIS_URL: redis://redis:6379/0
+      USE_CELERY: "true"
+      ENVIRONMENT: development
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: >
+      celery -A app.workers.celery_app worker
+      --loglevel=info
+      --concurrency=2
+      --queues=pipeline,discovery,nlp,scoring,matching
+
+volumes:
+  postgres_data:
+  redis_data:

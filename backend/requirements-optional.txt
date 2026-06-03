@@ -1,0 +1,25 @@
+# Optional NLP dependencies — not required for the core pipeline.
+# Install these to enable BERTopic topic modelling and spaCy NER.
+#
+# RAM requirements:
+#   bertopic: ~600 MB peak (UMAP + HDBSCAN)
+#   spaCy en_core_web_sm: ~50 MB
+#
+# Install:
+#   pip install -r requirements-optional.txt
+#   python -m spacy download en_core_web_sm
+#
+# After install, the system auto-detects these and enables the features.
+# Without them, bertopic_topics and spacy_entities remain empty lists —
+# the pipeline continues normally.
+
+# ── Topic modelling ───────────────────────────────────────────────────────────
+bertopic==0.16.0
+
+# ── Named entity recognition + linguistic features ───────────────────────────
+# spaCy 3.7.x supports Python 3.11 cleanly.
+# Avoid 3.8.x on Python 3.12 (pydantic-v1 compat conflict).
+spacy==3.7.4
+
+# ── Redis async client (for production rate-limiting + Celery broker) ─────────
+redis[asyncio]==5.0.4

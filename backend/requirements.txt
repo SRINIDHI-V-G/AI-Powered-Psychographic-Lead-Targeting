@@ -21,6 +21,22 @@ psycopg2-binary==2.9.9
 sentence-transformers==2.7.0
 # Empath emotional/topic category lexicon
 empath==0.89
-# Note: spaCy (3.7/3.8) has a pydantic-v1-compat / Python 3.12 conflict.
-# Basic text metrics (entities, vocab richness) are implemented in pure Python.
-# spaCy can be re-evaluated for a future hardening phase.
+# Note: BERTopic and spaCy are optional — see requirements-optional.txt.
+# The pipeline runs without them (bertopic_topics and spacy_entities remain []).
+# Install: pip install -r requirements-optional.txt && python -m spacy download en_core_web_sm
+
+# ── Phase F2: Celery task queue ───────────────────────────────────────────────
+# Celery is optional (USE_CELERY=False by default). Without Redis the app falls
+# back to asyncio.create_task for pipeline chaining.
+celery[redis]==5.3.6
+
+# ── Phase G: pgvector ────────────────────────────────────────────────────────
+# Adds VECTOR(384) column support for cosine similarity in PostgreSQL.
+# Requires pgvector extension in PostgreSQL (pgvector/pgvector:pg16 Docker image).
+pgvector==0.2.5
+
+# ── Phase H: Instagram Discovery ─────────────────────────────────────────────
+# Instagram private API client. Set INSTAGRAM_USERNAME + INSTAGRAM_PASSWORD in .env.
+# Uses session persistence to avoid repeated logins (INSTAGRAM_SESSION_FILE).
+# Note: use a dedicated account — do NOT use a personal Instagram account.
+instagrapi>=1.6.0

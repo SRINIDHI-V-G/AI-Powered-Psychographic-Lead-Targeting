@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
+from app.dependencies import get_current_company
+from app.models.company import Company
 from app.schemas.company import CompanyCreate, CompanyPublic, CompanyResponse
 from app.crud.company import create_company, get_company_by_email, get_all_companies
 
@@ -27,7 +29,31 @@ async def register_company(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"A company with email '{data.email}' is already registered.",
         )
-    company = await create_company(db, data)
+    raw_key, company = await create_company(db, data)
+    # Build response manually so api_key is the plaintext key, not the stored hash.
+    return CompanyResponse(
+        id=company.id,
+        name=company.name,
+        email=company.email,
+        industry=company.industry,
+        website=company.website,
+        description=company.description,
+        is_active=company.is_active,
+        created_at=company.created_at,
+        updated_at=company.updated_at,
+        api_key=raw_key,
+    )
+
+
+@router.get(
+    "/me",
+    response_model=CompanyPublic,
+    summary="Get the authenticated company's profile",
+    description="Returns the profile of the company associated with the provided API key.",
+)
+async def get_my_company(
+    company: Company = Depends(get_current_company),
+) -> CompanyPublic:
     return company
 
 

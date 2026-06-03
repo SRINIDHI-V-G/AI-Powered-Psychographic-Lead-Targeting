@@ -100,7 +100,7 @@ async def _compute_user_matches(
     user_tags = list(nlp.interest_tags or []) if nlp else []
     user_keywords = dict(nlp.keyword_frequency or {}) if nlp else {}
 
-    # Load embedding
+    # Load embedding — prefer native VECTOR column, fall back to JSONB
     emb_r = await db.execute(
         select(UserEmbedding).where(
             UserEmbedding.user_id == user.id,
@@ -108,7 +108,12 @@ async def _compute_user_matches(
         )
     )
     emb_row: UserEmbedding | None = emb_r.scalar_one_or_none()
-    user_vec: list[float] | None = list(emb_row.embedding) if emb_row else None
+    if emb_row:
+        # embedding_vector is the pgvector VECTOR(384) column (may be None on old rows)
+        vec_source = getattr(emb_row, "embedding_vector", None) or emb_row.embedding
+        user_vec: list[float] | None = list(vec_source) if vec_source else None
+    else:
+        user_vec = None
 
     matches: list[LeadMatch] = []
     for cat in categories:

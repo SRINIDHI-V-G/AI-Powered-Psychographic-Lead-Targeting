@@ -35,15 +35,54 @@ def _build_provider_registry() -> list[BaseDiscoveryProvider]:
     """
     Return all available real providers in priority order.
 
-    Phase B1: only RedditProvider.
-    Phase B2: add YouTubeProvider, ForumProvider here.
-    Each provider declares supported_categories and supported_regions;
-    _select_provider() uses those to pick the best match for a product.
+    Provider selection priority (first matching provider wins):
+      1. RedditProvider     — if Reddit credentials are configured
+      2. YouTubeProvider    — if YouTube API key is configured
+      3. InstagramProvider  — if Instagram credentials are configured
+
+    Returns an empty list when MOCK_DISCOVERY=True or no credentials are
+    configured for any provider. The orchestrator falls back to
+    MockDiscoveryProvider in that case.
     """
-    if settings.use_mock_discovery():
-        return []   # no real providers available
-    from app.ml.discovery.reddit_provider import RedditProvider
-    return [RedditProvider()]
+    # Forced mock mode — bypass all real providers
+    if settings.MOCK_DISCOVERY:
+        return []
+
+    # No real credentials configured at all — fall back to mock
+    if not (
+        settings.reddit_credentials_configured()
+        or settings.youtube_credentials_configured()
+        or settings.instagram_credentials_configured()
+    ):
+        return []
+
+    providers: list[BaseDiscoveryProvider] = []
+
+    # Reddit (primary source — text-rich, ideal for OCEAN scoring)
+    if settings.reddit_credentials_configured():
+        try:
+            from app.ml.discovery.reddit_provider import RedditProvider
+            providers.append(RedditProvider())
+        except Exception as exc:
+            logger.warning("RedditProvider failed to initialise: %s", exc)
+
+    # YouTube (secondary source — comment-based text signals)
+    if settings.youtube_credentials_configured():
+        try:
+            from app.ml.discovery.youtube_provider import YouTubeProvider
+            providers.append(YouTubeProvider())
+        except Exception as exc:
+            logger.warning("YouTubeProvider failed to initialise: %s", exc)
+
+    # Instagram (tertiary source — poster + commenter discovery)
+    if settings.instagram_credentials_configured():
+        try:
+            from app.ml.discovery.instagram_provider import InstagramProvider
+            providers.append(InstagramProvider())
+        except Exception as exc:
+            logger.warning("InstagramProvider failed to initialise: %s", exc)
+
+    return providers
 
 
 def _select_provider(
@@ -95,20 +134,17 @@ def _get_provider(
     """
     Return the appropriate discovery provider for a given product.
 
+    Selection order:
+      1. Best real provider from registry (Reddit → YouTube based on credentials)
+      2. MockDiscoveryProvider as fallback when no real credentials are configured
+
     Uses MockDiscoveryProvider when:
       - MOCK_DISCOVERY=True in .env
-      - Reddit credentials are absent
+      - Neither Reddit nor YouTube credentials are configured
       - No registered provider supports the product's category/region
-
-    Uses the best-matching real provider otherwise.
     """
-    if settings.use_mock_discovery():
-        logger.info(
-            "DiscoveryOrchestrator: using MockDiscoveryProvider "
-            "(credentials configured=%s, MOCK_DISCOVERY=%s)",
-            settings.reddit_credentials_configured(),
-            settings.MOCK_DISCOVERY,
-        )
+    if settings.MOCK_DISCOVERY:
+        logger.info("DiscoveryOrchestrator: MOCK_DISCOVERY=True — using MockDiscoveryProvider")
         from app.ml.discovery.mock_provider import MockDiscoveryProvider
         return MockDiscoveryProvider(delay_ms=0)
 
@@ -272,13 +308,12 @@ class DiscoveryOrchestrator:
             # ── 8. Auto-trigger NLP pipeline ──────────────────────────────────
             # Only fire if there is content to process.
             if job.users_content_collected > 0:
-                import asyncio
-                from app.services.nlp_service import start_nlp_background
+                from app.workers.dispatch import dispatch
                 logger.info(
                     "%s auto-triggering NLP for %d users",
                     _log, job.users_content_collected,
                 )
-                asyncio.create_task(start_nlp_background(str(product.id)))
+                dispatch("nlp", str(product.id))
 
         except Exception as exc:
             import traceback

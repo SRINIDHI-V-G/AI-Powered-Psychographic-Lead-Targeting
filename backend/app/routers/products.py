@@ -9,6 +9,7 @@ from app.models.product import ProductStatus
 from app.schemas.product import ProductCreate, ProductResponse, ProductStatusResponse
 from app.crud.product import create_product, get_products_by_company, get_product_by_id
 from app.services.motivation_service import generate_motivations_background
+from app.workers.dispatch import dispatch
 
 router = APIRouter(prefix="/products", tags=["Products"])
 
@@ -32,7 +33,7 @@ async def submit_product(
     db: AsyncSession = Depends(get_db),
 ) -> ProductResponse:
     product = await create_product(db, data, company.id)
-    background_tasks.add_task(generate_motivations_background, str(product.id))
+    dispatch("motivations", str(product.id), background_tasks=background_tasks)
     return product
 
 
@@ -91,6 +92,84 @@ async def get_product_status(
 
 
 @router.post(
+    "/{product_id}/restart",
+    response_model=ProductStatusResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Restart the pipeline from the last completed checkpoint",
+    description=(
+        "Detects where the pipeline stalled or failed and re-fires the appropriate "
+        "stage. Useful after transient errors (Ollama timeout, Reddit rate-limit, etc.).\n\n"
+        "Restart map:\n"
+        "  pipeline_step 0–1  → re-run motivation generation\n"
+        "  pipeline_step 2    → re-run NLP (motivations exist)\n"
+        "  pipeline_step 3–4  → re-run NLP batch\n"
+        "  pipeline_step 5    → re-run OCEAN scoring\n"
+        "  pipeline_step 6+   → re-run matching + ranking\n\n"
+        "Only allowed when product status is 'failed'. "
+        "To restart from scratch, use POST /products/{id}/motivations/regenerate."
+    ),
+)
+async def restart_pipeline(
+    product_id: UUID,
+    background_tasks: BackgroundTasks,
+    company: Company = Depends(get_current_company),
+    db: AsyncSession = Depends(get_db),
+) -> ProductStatusResponse:
+    product = await get_product_by_id(db, product_id, company.id)
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Product {product_id} not found.",
+        )
+
+    if product.status != ProductStatus.failed:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Product is in status '{product.status.value}' — restart is only "
+                "allowed when status is 'failed'. "
+                "Use POST /products/{id}/motivations/regenerate to start over."
+            ),
+        )
+
+    step = product.pipeline_step
+    product.error_message = None
+
+    if step <= 1:
+        product.status = ProductStatus.pending
+        product.pipeline_step = 0
+        await db.commit()
+        await db.refresh(product)
+        dispatch("motivations", str(product.id), background_tasks=background_tasks)
+
+    elif step == 2:
+        product.status = ProductStatus.motivations_generated
+        await db.commit()
+        await db.refresh(product)
+        dispatch("nlp", str(product.id), background_tasks=background_tasks)
+
+    elif step in (3, 4):
+        product.status = ProductStatus.discovering
+        await db.commit()
+        await db.refresh(product)
+        dispatch("nlp", str(product.id), background_tasks=background_tasks)
+
+    elif step == 5:
+        product.status = ProductStatus.nlp_processing
+        await db.commit()
+        await db.refresh(product)
+        dispatch("ocean", str(product.id), background_tasks=background_tasks)
+
+    else:
+        product.status = ProductStatus.ocean_scoring
+        await db.commit()
+        await db.refresh(product)
+        dispatch("matching", str(product.id), background_tasks=background_tasks)
+
+    return product
+
+
+@router.post(
     "/{product_id}/motivations/regenerate",
     response_model=ProductStatusResponse,
     summary="Re-run motivation generation",
@@ -113,7 +192,6 @@ async def regenerate_motivations(
             detail=f"Product {product_id} not found.",
         )
 
-    # Reset to pending so the service's status guard doesn't short-circuit.
     product.status = ProductStatus.pending
     product.pipeline_step = 0
     product.error_message = None

@@ -122,10 +122,12 @@ async def process_user_nlp(db: AsyncSession, user_id: UUID) -> bool:
     await db.flush()
 
     # ── 6. Persist ────────────────────────────────────────────────────────────
+    from app.models.nlp import _HAS_PGVECTOR  # noqa: PLC0415
     db.add(UserEmbedding(
         user_id=user_id,
         embedding_type="combined",
-        embedding=embedding_vec,
+        embedding=embedding_vec,            # JSONB — always populated
+        embedding_vector=embedding_vec if _HAS_PGVECTOR else None,  # VECTOR(384) when available
         model_used="all-MiniLM-L6-v2",
         token_count=text_features["total_tokens"],
     ))
@@ -225,13 +227,12 @@ async def start_nlp_background(product_id: str) -> None:
 
             # ── Auto-trigger OCEAN scoring ────────────────────────────────────
             if summary["processed"] > 0:
-                import asyncio
-                from app.services.ocean_service import start_ocean_background
+                from app.workers.dispatch import dispatch
                 logger.info(
                     "%s auto-triggering OCEAN scoring for %d users",
                     _log, summary["processed"],
                 )
-                asyncio.create_task(start_ocean_background(product_id))
+                dispatch("ocean", product_id)
 
         except Exception as exc:
             tb = traceback.format_exc()
