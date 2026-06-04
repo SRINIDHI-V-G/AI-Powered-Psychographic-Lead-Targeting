@@ -626,6 +626,45 @@ class InstagramProvider(BaseDiscoveryProvider):
             else:
                 raise
 
+        # Verify the session actually works for the private API (not just account_info).
+        # A browser-derived session passes login() but fails on all real API calls.
+        # Catch this early so the orchestrator falls back to mock instead of running
+        # a provider that silently returns 0 results for every hashtag.
+        self._verify_api_access()
+
+    def _verify_api_access(self) -> None:
+        """
+        Confirm the current session can actually reach the private API.
+
+        A browser-derived sessionid passes cl.login() (no challenge triggered
+        because user_id is set from the session file), but all mobile private-API
+        calls subsequently return LoginRequired.  Catching this here lets the
+        orchestrator fall back to MockDiscoveryProvider rather than silently
+        producing zero results.
+
+        We probe user_info() on the own account — the lightest private-API call
+        available without a hashtag search.
+        """
+        try:
+            uid = None
+            if self._client.user_id:
+                uid = int(self._client.user_id)
+            if uid:
+                self._client.user_info(uid)
+                logger.info("InstagramProvider: private-API access verified (uid=%d)", uid)
+        except self._LoginRequired as exc:
+            raise RuntimeError(
+                "Instagram session appears valid but the private API rejected all requests "
+                "(LoginRequired on user_info). "
+                "This usually means a browser-derived sessionid was used instead of a "
+                "proper mobile app session. "
+                "Run backend/verify_instagram.py and approve the login in your "
+                "Instagram app to create a valid mobile session."
+            ) from exc
+        except Exception:
+            # Any other exception (network, timeout, etc.) — don't block startup.
+            pass
+
     def _save_session(self) -> None:
         """Persist the current Instagram session to the configured file."""
         try:

@@ -43,6 +43,9 @@ pip-delete-this-directory.txt
 # Keep the example template — it has no real secrets
 !.env.example
 
+# Instagram session file — contains live auth tokens, never commit
+instagram_session.json
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Testing & Coverage
 # ──────────────────────────────────────────────────────────────────────────────

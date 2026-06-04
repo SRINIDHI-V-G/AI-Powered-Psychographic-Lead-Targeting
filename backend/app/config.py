@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     # Leave blank to disable Instagram discovery.
     INSTAGRAM_USERNAME: str = ""
     INSTAGRAM_PASSWORD: str = ""
+    # Browser session-ID login (alternative to username+password).
+    # Get it from DevTools → Application → Cookies → instagram.com → sessionid.
+    # When set, instagrapi skips the password flow and avoids challenge issues.
+    INSTAGRAM_SESSION_ID: str = ""
     # Path to persist the Instagram session (cookies + device fingerprint).
     # In Docker: mount a persistent volume so the session survives restarts.
     INSTAGRAM_SESSION_FILE: str = "instagram_session.json"
@@ -89,7 +93,9 @@ class Settings(BaseSettings):
         return bool(self.YOUTUBE_API_KEY)
 
     def instagram_credentials_configured(self) -> bool:
-        return bool(self.INSTAGRAM_USERNAME and self.INSTAGRAM_PASSWORD)
+        session_id_ok = bool(self.INSTAGRAM_SESSION_ID and self.INSTAGRAM_USERNAME)
+        password_ok = bool(self.INSTAGRAM_USERNAME and self.INSTAGRAM_PASSWORD)
+        return session_id_ok or password_ok
 
     def use_mock_discovery(self) -> bool:
         """True → use MockDiscoveryProvider for all discovery jobs."""
