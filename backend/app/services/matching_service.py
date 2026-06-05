@@ -31,6 +31,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
+from app.crud.product_ocean import get_product_ocean
 from app.ml.matching.scorer import (
     normalize_motivation_ocean,
     compute_ocean_similarity,
@@ -78,6 +79,7 @@ async def _compute_user_matches(
     user: DiscoveredUser,
     categories: list[MotivationCategory],
     motiv_embeddings: dict[UUID, list[float]],
+    product_ocean_100: dict[str, float] | None = None,
 ) -> list[LeadMatch]:
     """
     Compute LeadMatch rows for one user across all motivation categories.
@@ -140,6 +142,11 @@ async def _compute_user_matches(
         )
         reasons = build_reasoning(ocean_s, embed_s, interest_s, user_tags, motiv_tags, cat.name)
 
+        # Supplementary product-level alignment score (does not affect final_score)
+        product_ocean_s: float | None = None
+        if product_ocean_100 is not None:
+            product_ocean_s = compute_ocean_similarity(ocean, product_ocean_100)
+
         matches.append(LeadMatch(
             product_id=user.product_id,
             user_id=user.id,
@@ -147,6 +154,7 @@ async def _compute_user_matches(
             ocean_score=ocean_s,
             embedding_score=embed_s,
             interest_score=interest_s,
+            product_ocean_score=product_ocean_s,
             final_score=final_s,
             confidence=conf,
             reasoning=reasons,
@@ -230,6 +238,27 @@ async def run_matching_for_product(db: AsyncSession, product_id: UUID) -> dict:
         logger.warning("%s no active motivation categories found — aborting", _log)
         return {"total": 0, "processed": 0, "failed": 0}
 
+    # ── 1b. Load product-level OCEAN profile (supplementary signal) ───────────
+    product_ocean_profile = await get_product_ocean(db, product_id)
+    if product_ocean_profile:
+        product_ocean_100: dict[str, float] | None = {
+            "openness":          product_ocean_profile.openness,
+            "conscientiousness": product_ocean_profile.conscientiousness,
+            "extraversion":      product_ocean_profile.extraversion,
+            "agreeableness":     product_ocean_profile.agreeableness,
+            "neuroticism":       product_ocean_profile.neuroticism,
+        }
+        logger.info(
+            "%s product OCEAN loaded — will compute product_ocean_score per lead",
+            _log,
+        )
+    else:
+        product_ocean_100 = None
+        logger.info(
+            "%s no product OCEAN profile found — product_ocean_score will be NULL",
+            _log,
+        )
+
     # ── 2. Pre-compute motivation embeddings (once per run) ───────────────────
     motiv_embeddings = _embed_motivations(categories)
     logger.info(
@@ -263,7 +292,7 @@ async def run_matching_for_product(db: AsyncSession, product_id: UUID) -> dict:
         for user in batch:
             try:
                 matches = await _compute_user_matches(
-                    db, user, categories, motiv_embeddings
+                    db, user, categories, motiv_embeddings, product_ocean_100
                 )
                 if matches:
                     for m in matches:
@@ -308,20 +337,24 @@ async def start_matching_background(product_id: str) -> None:
             return
 
         product.status = ProductStatus.matching
-        product.pipeline_step = 7
+        product.pipeline_step = 8
         await db.commit()
 
         try:
             summary = await run_matching_for_product(db, UUID(product_id))
 
             product.status = ProductStatus.ranked
-            product.pipeline_step = 8
+            product.pipeline_step = 9
             await db.commit()
 
             logger.info(
                 "%s complete — processed=%d failed=%d",
                 _log, summary["processed"], summary["failed"],
             )
+
+            # Advance to handle discovery
+            from app.workers.dispatch import dispatch
+            dispatch("handles", product_id)
 
         except Exception as exc:
             tb = traceback.format_exc()

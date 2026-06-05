@@ -110,28 +110,27 @@ async def get_dashboard_overview(
     total_discovered = sum(user_counts.values())
 
     # ── 3. Lead tier counts per product ──────────────────────────────────────
+    # Tiers derived from final_score: hot>=75, warm>=55, cold<55
     leads_r = await db.execute(
         select(
             LeadMatch.product_id,
-            LeadMatch.tier,
-            func.count().label("cnt"),
+            LeadMatch.final_score,
         )
         .where(
             LeadMatch.product_id.in_(product_ids),
             LeadMatch.is_best_match == True,  # noqa: E712
         )
-        .group_by(LeadMatch.product_id, LeadMatch.tier)
     )
     hot_per_product: dict = {}
     warm_per_product: dict = {}
     ranked_per_product: dict = {}
     for row in leads_r:
         pid = row.product_id
-        ranked_per_product[pid] = ranked_per_product.get(pid, 0) + row.cnt
-        if row.tier == "Hot":
-            hot_per_product[pid] = row.cnt
-        elif row.tier == "Warm":
-            warm_per_product[pid] = row.cnt
+        ranked_per_product[pid] = ranked_per_product.get(pid, 0) + 1
+        if row.final_score >= 75.0:
+            hot_per_product[pid] = hot_per_product.get(pid, 0) + 1
+        elif row.final_score >= 55.0:
+            warm_per_product[pid] = warm_per_product.get(pid, 0) + 1
 
     total_hot = sum(hot_per_product.values())
     total_warm = sum(warm_per_product.values())

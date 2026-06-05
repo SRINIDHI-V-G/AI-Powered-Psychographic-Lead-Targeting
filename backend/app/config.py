@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     OLLAMA_MODEL: str = "llama3.1:8b"
     OLLAMA_TIMEOUT: float = 300.0
     USE_MOCK_LLM: bool = False
-    FALLBACK_TO_MOCK_ON_ERROR: bool = True
+    FALLBACK_TO_MOCK_ON_ERROR: bool = False
 
     # ── Reddit Discovery ──────────────────────────────────────────────────────
     # Obtain credentials at https://reddit.com/prefs/apps (type: script).
@@ -68,6 +68,21 @@ class Settings(BaseSettings):
     # Videos searched per keyword × max_results_per_video × comment density = user volume.
     YOUTUBE_MAX_VIDEOS_PER_KEYWORD: int = 10
     YOUTUBE_MAX_COMMENTS_PER_VIDEO: int = 50
+
+    # ── Similar Product Discovery ─────────────────────────────────────────────
+    # Maximum number of similar products to keep after filtering by similarity
+    # threshold. The LLM is asked for 8 candidates; only the top SIMILAR_PRODUCTS_MAX
+    # that exceed the threshold are persisted.
+    SIMILAR_PRODUCTS_MAX: int = 5
+
+    # Minimum cosine similarity (0.0-1.0) between a candidate's OCEAN profile
+    # and the source product's OCEAN profile for the candidate to be kept.
+    # Raise this value to get fewer but more personality-aligned similar products.
+    SIMILAR_PRODUCT_SIMILARITY_THRESHOLD: float = 0.65
+
+    # Timeout in seconds for the similar products LLM call.
+    # Separate from OLLAMA_TIMEOUT so the two pipelines can be tuned independently.
+    SIMILAR_PRODUCTS_LLM_TIMEOUT: float = 120.0
 
     # ── Celery / background task dispatch ────────────────────────────────────
     # Set USE_CELERY=True + configure REDIS_URL to enable Celery task queue.

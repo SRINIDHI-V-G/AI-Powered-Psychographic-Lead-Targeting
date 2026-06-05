@@ -7,6 +7,8 @@ Endpoints:
   GET  /products/{id}/discovery/jobs/{jid}  — get one job (for status polling)
   GET  /products/{id}/discovery/users       — list discovered users (paginated)
   GET  /products/{id}/discovery/users/{uid}/content — user content items
+  GET  /products/{id}/discovery/users/{uid}/nlp     — user NLP features
+  GET  /products/{id}/discovery/users/{uid}/ocean   — user OCEAN score
   GET  /discovery/provider/status           — provider health check (unauthenticated)
 """
 from __future__ import annotations
@@ -20,6 +22,7 @@ from app.config import settings
 from app.crud.discovery import (
     count_discovered_users,
     create_discovery_job,
+    get_discovered_user,
     get_discovered_users,
     get_discovery_job,
     get_discovery_jobs_for_product,
@@ -115,6 +118,7 @@ async def start_discovery(
     allowed_statuses = {
         "motivations_generated", "discovering", "nlp_processing",
         "ocean_scoring", "matching", "ranked", "completed",
+        "product_ocean_ready", "similar_products_found",
     }
     if product.status.value not in allowed_statuses:
         raise HTTPException(
@@ -197,7 +201,6 @@ async def list_discovered_users(
     if not product:
         raise HTTPException(status_code=404, detail="Product not found.")
 
-    # If no job_id specified, use the most recent completed job
     actual_job_id = job_id
     if not actual_job_id:
         jobs = await get_discovery_jobs_for_product(db, product_id)
@@ -212,7 +215,7 @@ async def list_discovered_users(
 
     return DiscoveredUserListResponse(
         product_id=product_id,
-        job_id=actual_job_id or product_id,  # fallback for response schema
+        job_id=actual_job_id or product_id,
         total=total,
         page=page,
         limit=limit,
@@ -224,6 +227,11 @@ async def list_discovered_users(
     "/products/{product_id}/discovery/users/{user_id}/content",
     response_model=list[UserContentResponse],
     summary="Get content items collected for a specific user",
+    description=(
+        "Returns content items (posts, comments, bio) collected for a discovered user. "
+        "Returns an empty list if the user exists but has no content yet. "
+        "Returns 404 if the user does not exist or does not belong to this product."
+    ),
 )
 async def get_user_content_items(
     product_id: UUID,
@@ -235,4 +243,9 @@ async def get_user_content_items(
     product = await get_product_by_id(db, product_id, company.id)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found.")
+
+    user = await get_discovered_user(db, user_id, product_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
     return await get_user_content(db, user_id, limit=limit)

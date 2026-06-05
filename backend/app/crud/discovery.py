@@ -3,9 +3,8 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.models.discovery import DiscoveredUser, DiscoveryJob, UserContent
 
@@ -20,7 +19,7 @@ async def create_discovery_job(
 ) -> DiscoveryJob:
     job = DiscoveryJob(
         product_id=product_id,
-        provider_name="pending",   # updated by orchestrator when it starts
+        provider_name="pending",
         sources=[],
         max_users=max_users,
         search_config=search_config,
@@ -60,6 +59,21 @@ async def get_discovery_job(
 
 # ── Discovered Users ──────────────────────────────────────────────────────────
 
+async def get_discovered_user(
+    db: AsyncSession,
+    user_id: UUID,
+    product_id: UUID,
+) -> DiscoveredUser | None:
+    """Return a single discovered user, or None if it does not exist or belongs to a different product."""
+    result = await db.execute(
+        select(DiscoveredUser).where(
+            DiscoveredUser.id == user_id,
+            DiscoveredUser.product_id == product_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
 async def get_discovered_users(
     db: AsyncSession,
     product_id: UUID,
@@ -83,8 +97,7 @@ async def count_discovered_users(
     product_id: UUID,
     job_id: UUID | None = None,
 ) -> int:
-    from sqlalchemy import func, select as sa_select
-    stmt = sa_select(func.count()).select_from(DiscoveredUser).where(
+    stmt = select(func.count()).select_from(DiscoveredUser).where(
         DiscoveredUser.product_id == product_id
     )
     if job_id:

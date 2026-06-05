@@ -136,6 +136,7 @@ async def restart_pipeline(
     product.error_message = None
 
     if step <= 1:
+        # step 0–1: motivations not complete — restart from scratch
         product.status = ProductStatus.pending
         product.pipeline_step = 0
         await db.commit()
@@ -143,24 +144,44 @@ async def restart_pipeline(
         dispatch("motivations", str(product.id), background_tasks=background_tasks)
 
     elif step == 2:
+        # step 2: motivations exist — re-derive product OCEAN
         product.status = ProductStatus.motivations_generated
         await db.commit()
         await db.refresh(product)
-        dispatch("nlp", str(product.id), background_tasks=background_tasks)
+        dispatch("product_ocean", str(product.id), background_tasks=background_tasks)
 
-    elif step in (3, 4):
-        product.status = ProductStatus.discovering
+    elif step == 3:
+        # step 3: product OCEAN exists — re-discover similar products
+        product.status = ProductStatus.product_ocean_ready
+        await db.commit()
+        await db.refresh(product)
+        dispatch("similar_products", str(product.id), background_tasks=background_tasks)
+
+    elif step in (4, 5):
+        # step 4: similar products done, discovery not started
+        # step 5: discovery complete — run NLP on collected users
+        product.status = ProductStatus.similar_products_found
         await db.commit()
         await db.refresh(product)
         dispatch("nlp", str(product.id), background_tasks=background_tasks)
 
-    elif step == 5:
+    elif step == 6:
+        # step 6: NLP in progress or failed — re-run NLP
+        # process_user_nlp skips already-processed users, then auto-triggers OCEAN
         product.status = ProductStatus.nlp_processing
+        await db.commit()
+        await db.refresh(product)
+        dispatch("nlp", str(product.id), background_tasks=background_tasks)
+
+    elif step == 7:
+        # step 7: NLP complete, OCEAN failed — re-run OCEAN scoring
+        product.status = ProductStatus.ocean_scoring
         await db.commit()
         await db.refresh(product)
         dispatch("ocean", str(product.id), background_tasks=background_tasks)
 
     else:
+        # step 8+: OCEAN complete, matching/ranking failed — re-run matching
         product.status = ProductStatus.ocean_scoring
         await db.commit()
         await db.refresh(product)

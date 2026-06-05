@@ -265,7 +265,7 @@ async def start_ocean_background(product_id: str) -> None:
             return
 
         product.status = ProductStatus.ocean_scoring
-        product.pipeline_step = 6
+        product.pipeline_step = 7
         await db.commit()
 
         try:

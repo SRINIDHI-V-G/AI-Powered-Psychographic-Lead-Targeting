@@ -72,6 +72,11 @@ class LeadMatch(Base):
     embedding_score: Mapped[float] = mapped_column(Float, nullable=False)
     interest_score: Mapped[float] = mapped_column(Float, nullable=False)
 
+    # OCEAN similarity between this lead and the product-level OCEAN vector.
+    # Informational only — does NOT affect final_score. NULL if the product
+    # has no ocean_profile yet (e.g., product predates this feature).
+    product_ocean_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+
     # ── Composite score (0–100) ───────────────────────────────────────────────
     final_score: Mapped[float] = mapped_column(Float, nullable=False, index=True)
 

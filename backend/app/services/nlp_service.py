@@ -210,7 +210,7 @@ async def start_nlp_background(product_id: str) -> None:
             return
 
         product.status = ProductStatus.nlp_processing
-        product.pipeline_step = 5
+        product.pipeline_step = 6
         await db.commit()
 
         try:

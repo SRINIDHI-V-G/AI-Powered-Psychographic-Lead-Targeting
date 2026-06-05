@@ -18,6 +18,8 @@ class ProductStatus(str, enum.Enum):
     pending = "pending"
     analyzing = "analyzing"
     motivations_generated = "motivations_generated"
+    product_ocean_ready = "product_ocean_ready"       # product OCEAN vector derived
+    similar_products_found = "similar_products_found" # similar products discovered
     discovering = "discovering"
     nlp_processing = "nlp_processing"
     ocean_scoring = "ocean_scoring"
@@ -76,3 +78,16 @@ class Product(Base):
     )
 
     company: Mapped["Company"] = relationship("Company", back_populates="products")
+
+    ocean_profile: Mapped["ProductOceanProfile | None"] = relationship(  # type: ignore[name-defined]  # noqa: F821
+        "ProductOceanProfile",
+        back_populates="product",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+    similar_products: Mapped[list["SimilarProduct"]] = relationship(  # type: ignore[name-defined]  # noqa: F821
+        "SimilarProduct",
+        back_populates="product",
+        cascade="all, delete-orphan",
+        order_by="SimilarProduct.sort_order",
+    )

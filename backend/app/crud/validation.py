@@ -17,6 +17,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.discovery import DiscoveredUser, UserContent
+from app.models.lead_handle import LeadHandle
 from app.models.matching import LeadMatch
 from app.models.motivation import MotivationCategory
 from app.models.nlp import UserNlpFeatures
@@ -131,6 +132,7 @@ async def get_lead_inspection(
             "ocean_score": match.ocean_score,
             "embedding_score": match.embedding_score,
             "interest_score": match.interest_score,
+            "product_ocean_score": getattr(match, "product_ocean_score", None),
             "confidence": match.confidence,
             "reasoning": match.reasoning,
         }
@@ -154,6 +156,14 @@ async def get_lead_inspection(
     raw_empath = dict(nlp.empath_scores or {}) if nlp else {}
     top_empath = sorted(raw_empath.items(), key=lambda x: x[1], reverse=True)[:10]
     empath_list = [{"category": k, "score": round(v, 4)} for k, v in top_empath]
+
+    # ── Handles ───────────────────────────────────────────────────────────────
+    handles_r = await db.execute(
+        select(LeadHandle)
+        .where(LeadHandle.discovered_user_id == user_id)
+        .order_by(LeadHandle.handle_score.desc())
+    )
+    handle_rows = list(handles_r.scalars().all())
 
     return {
         "user_id": str(user.id),
@@ -194,6 +204,21 @@ async def get_lead_inspection(
         "all_category_scores": all_scores,
         "quality_flags": flags,
         "passes_quality_filter": len(flags) == 0,
+        "handles": [
+            {
+                "id": str(h.id),
+                "discovered_user_id": str(h.discovered_user_id),
+                "platform": h.platform,
+                "handle": h.handle,
+                "handle_score": h.handle_score,
+                "confidence": h.confidence,
+                "tier": h.tier,
+                "evidence_json": h.evidence_json,
+                "verification_json": h.verification_json,
+                "created_at": h.created_at,
+            }
+            for h in handle_rows
+        ],
     }
 
 
@@ -498,6 +523,20 @@ async def get_leads_for_export(
     )
     rows = result.all()
 
+    # Pre-fetch top handle per user for export columns
+    user_ids = [user.id for _, user, *_ in rows]
+    top_handles: dict[str, str] = {}
+    if user_ids:
+        handle_r = await db.execute(
+            select(LeadHandle)
+            .where(LeadHandle.discovered_user_id.in_(user_ids))
+            .order_by(LeadHandle.handle_score.desc())
+        )
+        for h in handle_r.scalars().all():
+            uid = str(h.discovered_user_id)
+            if uid not in top_handles:
+                top_handles[uid] = f"{h.platform}:{h.handle} ({h.tier})"
+
     export_rows = []
     for lead, user, cat, ocean, nlp in rows:
         scoring_method = ocean.scoring_method if ocean else "unavailable"
@@ -514,11 +553,13 @@ async def get_leads_for_export(
             "location": user.location or "",
             "location_confidence": user.location_confidence,
             "follower_count": user.follower_count,
+            "discovery_source": getattr(user, "discovery_source", "primary"),
             "best_motivation_category": cat.name,
             "final_score": lead.final_score,
             "ocean_component_score": lead.ocean_score,
             "embedding_component_score": lead.embedding_score,
             "interest_component_score": lead.interest_score,
+            "product_ocean_score": getattr(lead, "product_ocean_score", None),
             "confidence": lead.confidence,
             "openness": ocean.openness if ocean else None,
             "conscientiousness": ocean.conscientiousness if ocean else None,
@@ -530,6 +571,7 @@ async def get_leads_for_export(
             "total_tokens": total_tokens,
             "reasoning": " | ".join(lead.reasoning or []),
             "quality_flags": "; ".join(flags) if flags else "PASS",
+            "top_handle": top_handles.get(str(user.id), ""),
         })
 
     return export_rows

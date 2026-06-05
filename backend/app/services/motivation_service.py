@@ -255,6 +255,11 @@ async def generate_motivations_background(
             await db.commit()
             logger.info("%s DONE (%d categories, source=%s)", _log, len(categories), source)
 
+            # ── 5. Auto-trigger product OCEAN derivation ──────────────────────
+            from app.workers.dispatch import dispatch
+            dispatch("product_ocean", product_id)
+            logger.info("%s dispatched 'product_ocean'", _log)
+
         except Exception as exc:
             full_tb = traceback.format_exc()
             logger.exception("%s FAILED — %s", _log, exc)

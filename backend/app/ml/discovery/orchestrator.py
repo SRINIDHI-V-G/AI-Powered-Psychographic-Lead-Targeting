@@ -152,12 +152,22 @@ def _get_provider(
     provider = _select_provider(registry, product_category, product_region)
 
     if provider is None:
-        logger.warning(
-            "No real provider found for category=%r region=%r — falling back to mock",
-            product_category, product_region,
+        if settings.FALLBACK_TO_MOCK_ON_ERROR:
+            logger.warning(
+                "No real provider found for category=%r region=%r — falling back to MockDiscoveryProvider. "
+                "Set FALLBACK_TO_MOCK_ON_ERROR=false to surface this as a job failure instead.",
+                product_category, product_region,
+            )
+            from app.ml.discovery.mock_provider import MockDiscoveryProvider
+            return MockDiscoveryProvider(delay_ms=0)
+        raise RuntimeError(
+            "No real discovery provider could be initialised for "
+            f"category={product_category!r} region={product_region!r}. "
+            "Configure at least one credential set (REDDIT_CLIENT_ID+SECRET, "
+            "YOUTUBE_API_KEY, or valid Instagram credentials) and ensure the "
+            "provider initialises without errors. "
+            "Set FALLBACK_TO_MOCK_ON_ERROR=true to use MockDiscoveryProvider instead."
         )
-        from app.ml.discovery.mock_provider import MockDiscoveryProvider
-        return MockDiscoveryProvider(delay_ms=0)
 
     logger.info(
         "DiscoveryOrchestrator: selected provider=%s for category=%r region=%r",
@@ -229,6 +239,27 @@ class DiscoveryOrchestrator:
                 _log, len(unique_keywords), len(categories),
             )
 
+            # ── Expand with similar product keywords ──────────────────────────
+            # discovery_service pre-populates job.search_config["similar_products"]
+            # with a list of {name, keywords, similarity_score} dicts before this
+            # orchestrator is called. We merge those keywords here so providers
+            # search for discussions about similar products in the same run.
+            sp_entries: list[dict] = (job.search_config or {}).get("similar_products", [])
+            sp_kw_added = 0
+            for sp_entry in sp_entries:
+                for kw in sp_entry.get("keywords", []):
+                    kw_clean = kw.strip().lower()
+                    if kw_clean and kw_clean not in seen_kw:
+                        seen_kw.add(kw_clean)
+                        unique_keywords.append(kw_clean)
+                        sp_kw_added += 1
+
+            if sp_kw_added:
+                logger.info(
+                    "%s added %d keywords from %d similar products (total=%d)",
+                    _log, sp_kw_added, len(sp_entries), len(unique_keywords),
+                )
+
             # ── 3. Select provider + discover ─────────────────────────────────
             provider = _get_provider(
                 product_category=product.category or "",
@@ -297,7 +328,7 @@ class DiscoveryOrchestrator:
             job.completed_at = datetime.now(timezone.utc)
 
             product.status = ProductStatus.discovering
-            product.pipeline_step = 3
+            product.pipeline_step = 5
             await db.commit()
 
             logger.info(

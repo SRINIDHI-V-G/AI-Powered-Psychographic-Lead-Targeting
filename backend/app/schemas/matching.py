@@ -30,8 +30,12 @@ class LeadSummary(BaseModel):
     ocean_score: float
     embedding_score: float
     interest_score: float
+    # Alignment between lead OCEAN and the product-level OCEAN vector.
+    # NULL for products that predate the product OCEAN feature.
+    product_ocean_score: float | None = None
     confidence: float
     reasoning: list[str]
+    discovery_source: str = "primary"
 
 
 class LeadListResponse(BaseModel):
@@ -49,6 +53,7 @@ class CategoryScoreDetail(BaseModel):
     ocean_score: float
     embedding_score: float
     interest_score: float
+    product_ocean_score: float | None = None
     confidence: float
     reasoning: list[str]
 

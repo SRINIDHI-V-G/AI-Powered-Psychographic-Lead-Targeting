@@ -1,5 +1,7 @@
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -9,13 +11,17 @@ from sqlalchemy import text
 from app.config import settings, warn_missing_credentials
 from app.database import engine
 from app.middleware.rate_limit import RateLimitMiddleware
-from app.models.base import Base
-# Import ALL models so create_all registers every table
+
+# Model imports are kept so that references elsewhere in the codebase resolve
+# correctly at runtime. They do NOT drive schema creation — Alembic migrations
+# are the sole source of truth for the database schema.
+# Before starting the server, run: alembic upgrade head
 from app.models import (  # noqa: F401
     Company, Product, MotivationCategory, MotivationOceanProfile,
+    ProductOceanProfile, SimilarProduct,
     DiscoveryJob, DiscoveredUser, UserContent,
     EnrichmentJob, ProductEnrichmentSignal,
-    UserEmbedding, UserNlpFeatures, UserOceanScore, LeadMatch,
+    UserEmbedding, UserNlpFeatures, UserOceanScore, LeadMatch, LeadHandle,
 )
 from app.routers import companies, products, motivations
 from app.routers import dashboard
@@ -26,12 +32,47 @@ from app.routers import nlp
 from app.routers import ocean
 from app.routers import matching
 from app.routers import validation
+from app.routers import product_ocean
+from app.routers import similar_products
+
+logger = logging.getLogger(__name__)
+
+_EXPECTED_REVISION = "b2c3d4e5f6a7"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    # Verify the database is reachable and migrations are at head.
+    # Schema creation is handled exclusively by `alembic upgrade head`.
+    # Never call Base.metadata.create_all() here — it silently skips
+    # ALTER TABLE operations from migrations and leaves columns missing.
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text("SELECT version_num FROM alembic_version LIMIT 1")
+            )
+            row = result.fetchone()
+            if row is None:
+                logger.error(
+                    "alembic_version table is empty. "
+                    "Run `alembic upgrade head` before starting the server."
+                )
+            elif row[0] != _EXPECTED_REVISION:
+                logger.warning(
+                    "Database is at Alembic revision %s; expected %s. "
+                    "Run `alembic upgrade head` to apply pending migrations.",
+                    row[0],
+                    _EXPECTED_REVISION,
+                )
+            else:
+                logger.info("Database schema verified at revision %s.", row[0])
+    except Exception as exc:
+        logger.error(
+            "Database connectivity check failed: %s. "
+            "Ensure PostgreSQL is running and DATABASE_URL is correct.",
+            exc,
+        )
+
     warn_missing_credentials()
     yield
     await engine.dispose()
@@ -69,6 +110,8 @@ app.include_router(nlp.router, prefix="/api/v1")
 app.include_router(ocean.router, prefix="/api/v1")
 app.include_router(validation.router, prefix="/api/v1")
 app.include_router(matching.router, prefix="/api/v1")
+app.include_router(product_ocean.router, prefix="/api/v1")
+app.include_router(similar_products.router, prefix="/api/v1")
 
 # ── Static files ───────────────────────────────────────────────────────────────
 
@@ -98,7 +141,6 @@ if STATIC_DIR.exists():
 
 @app.get("/health", tags=["Health"])
 async def health_check() -> dict:
-    # Database
     try:
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
@@ -106,7 +148,6 @@ async def health_check() -> dict:
     except Exception as exc:
         db_status = f"error: {exc}"
 
-    # Redis (optional — only checked when REDIS_URL is configured)
     redis_status = "not_configured"
     if settings.REDIS_URL:
         try:

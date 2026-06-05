@@ -5,6 +5,8 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
+from app.schemas.handles import HandleResponse
+
 
 # ── Inspection ────────────────────────────────────────────────────────────────
 
@@ -44,6 +46,7 @@ class CategoryMatchScore(BaseModel):
     ocean_score: float
     embedding_score: float
     interest_score: float
+    product_ocean_score: float | None = None
     confidence: float
     reasoning: list[str]
 
@@ -70,6 +73,7 @@ class LeadInspectionResponse(BaseModel):
     all_category_scores: list[CategoryMatchScore]
     quality_flags: list[str]
     passes_quality_filter: bool
+    handles: list[HandleResponse] = []
 
 
 # ── Analytics ─────────────────────────────────────────────────────────────────

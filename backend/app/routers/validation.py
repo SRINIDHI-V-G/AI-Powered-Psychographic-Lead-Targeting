@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.crud.handles import get_user_handles
 from app.crud.product import get_product_by_id
 from app.crud.validation import (
     get_lead_inspection,
@@ -32,6 +33,7 @@ from app.crud.validation import (
 from app.database import get_db
 from app.dependencies import get_current_company
 from app.models.company import Company
+from app.schemas.handles import HandleListResponse, HandleResponse
 from app.schemas.validation import LeadInspectionResponse, LeadAnalyticsResponse
 
 router = APIRouter(tags=["Lead Validation"])
@@ -40,13 +42,15 @@ router = APIRouter(tags=["Lead Validation"])
 _CSV_FIELDS = [
     "rank", "username", "display_name", "platform", "profile_url",
     "location", "location_confidence", "follower_count",
+    "discovery_source",
     "best_motivation_category",
     "final_score", "ocean_component_score", "embedding_component_score", "interest_component_score",
+    "product_ocean_score",
     "confidence",
     "openness", "conscientiousness", "extraversion", "agreeableness", "neuroticism",
     "ocean_scoring_method",
     "interest_tags", "total_tokens",
-    "reasoning", "quality_flags",
+    "reasoning", "quality_flags", "top_handle",
 ]
 
 
@@ -122,6 +126,37 @@ async def lead_analytics(
         raise HTTPException(status_code=404, detail="Product not found.")
     result = await get_lead_analytics(db, product_id, min_confidence=min_confidence)
     return LeadAnalyticsResponse(**result)
+
+
+@router.get(
+    "/products/{product_id}/leads/{user_id}/handles",
+    response_model=HandleListResponse,
+    summary="Discovered social handles for one lead",
+    description=(
+        "Returns all candidate social-media handles discovered for a lead, "
+        "ordered by handle_score descending. "
+        "Tier values: confirmed (found in bio/profile URL), extracted (bio @mention), "
+        "inferred (username pattern), predicted (LLM/pattern-library candidate)."
+    ),
+)
+async def get_lead_handles(
+    product_id: UUID,
+    user_id: UUID,
+    platform: str | None = Query(
+        None, description="Filter to a single platform (e.g. twitter, instagram)"
+    ),
+    company: Company = Depends(get_current_company),
+    db: AsyncSession = Depends(get_db),
+) -> HandleListResponse:
+    product = await get_product_by_id(db, product_id, company.id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found.")
+    handles = await get_user_handles(db, user_id, platform=platform)
+    return HandleListResponse(
+        discovered_user_id=user_id,
+        total=len(handles),
+        handles=[HandleResponse.model_validate(h) for h in handles],
+    )
 
 
 @router.get(

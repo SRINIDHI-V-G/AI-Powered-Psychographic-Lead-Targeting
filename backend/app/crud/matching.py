@@ -116,12 +116,14 @@ async def get_ranked_leads(
             "profile_url": user.profile_url,
             "location": user.location,
             "follower_count": user.follower_count,
+            "discovery_source": getattr(user, "discovery_source", "primary"),
             "best_motivation_category": category.name,
             "motivation_category_id": str(category.id),
             "final_score": lead_match.final_score,
             "ocean_score": lead_match.ocean_score,
             "embedding_score": lead_match.embedding_score,
             "interest_score": lead_match.interest_score,
+            "product_ocean_score": getattr(lead_match, "product_ocean_score", None),
             "confidence": lead_match.confidence,
             "reasoning": lead_match.reasoning,
         })
@@ -176,6 +178,7 @@ async def get_lead_detail(
             "ocean_score": match.ocean_score,
             "embedding_score": match.embedding_score,
             "interest_score": match.interest_score,
+            "product_ocean_score": getattr(match, "product_ocean_score", None),
             "confidence": match.confidence,
             "reasoning": match.reasoning,
         }

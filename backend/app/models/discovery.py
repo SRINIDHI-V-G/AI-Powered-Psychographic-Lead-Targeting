@@ -47,23 +47,17 @@ class DiscoveryJob(Base):
         nullable=False,
         index=True,
     )
-    # Which provider ran this job — free-form string, not a DB enum,
-    # so adding new providers never requires a migration.
     provider_name: Mapped[str] = mapped_column(String(50), nullable=False)
-
-    # Job lifecycle: queued → running → collecting → completed | failed | cancelled
     status: Mapped[str] = mapped_column(String(20), default="queued", nullable=False)
-
-    # JSON list of platform sources requested, e.g. ["reddit"]
     sources: Mapped[list] = mapped_column(JSONB, default=list)
-
-    # Full config passed to the orchestrator for this job
     search_config: Mapped[dict] = mapped_column(JSONB, default=dict)
 
-    # Requested upper bound
-    max_users: Mapped[int] = mapped_column(Integer, default=150)
+    # Snapshot of which similar products and keywords were included in this run.
+    similar_products_searched: Mapped[list | None] = mapped_column(
+        JSONB, nullable=True
+    )
 
-    # Running counters updated as the job progresses
+    max_users: Mapped[int] = mapped_column(Integer, default=150)
     users_discovered: Mapped[int] = mapped_column(Integer, default=0)
     users_content_collected: Mapped[int] = mapped_column(Integer, default=0)
 
@@ -100,7 +94,6 @@ class DiscoveredUser(Base):
     __tablename__ = "discovered_users"
 
     __table_args__ = (
-        # Prevent the same user from being added twice to the same job
         UniqueConstraint(
             "platform", "platform_user_id", "discovery_job_id",
             name="uq_discovered_user_platform_job",
@@ -123,51 +116,35 @@ class DiscoveredUser(Base):
         index=True,
     )
 
-    # Platform where the user was found (display value): "reddit", "youtube", etc.
     platform: Mapped[str] = mapped_column(String(30), nullable=False)
-
-    # Provider that found this user — free-form string, extensible without migration.
-    # Examples: "reddit", "youtube_data_api", "discourse_forum"
     source_provider: Mapped[str] = mapped_column(String(50), nullable=False)
-
-    # The platform's own stable identifier for this user (e.g. Reddit user.id)
     platform_user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-
-    # Public-facing username / handle
     username: Mapped[str] = mapped_column(String(255), nullable=False)
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-
-    # Bio / "about" text from their public profile
     bio: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    # Inferred location text (e.g., "Chennai") — NOT guaranteed accurate
     location: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    # How confident are we that the location is correct?
-    # confirmed — city name explicitly in bio
-    # inferred  — found via a city-specific subreddit/channel
-    # regional  — country-level signal only (e.g., r/india participation)
-    # unknown   — no geographic signals detected
+    # confirmed | inferred | regional | unknown
     location_confidence: Mapped[str] = mapped_column(
         String(20), default="unknown", nullable=False
     )
 
-    # Engagement proxy. For Reddit: link_karma + comment_karma.
-    # NOT follower count (Reddit doesn't expose that). Named generically so
-    # the matching engine doesn't need to know the platform's metric name.
     follower_count: Mapped[int] = mapped_column(Integer, default=0)
-
-    # post_count intentionally omitted for Reddit — Reddit's API does not
-    # expose actual post count, only karma totals. Storing an unreliable
-    # estimate creates false precision. Set explicitly by providers that
-    # DO have reliable post counts (e.g., YouTube subscriber video count).
     post_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
-
-    # Full public URL to the user's profile
     profile_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
-
-    # Raw provider-specific data — kept for debugging, not used by pipeline
     raw_profile: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+    # "primary" | "similar_product"
+    discovery_source: Mapped[str] = mapped_column(
+        String(20), default="primary", nullable=False
+    )
+    # Which similar product triggered this user's discovery (NULL for primary).
+    similar_product_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("similar_products.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     # Pipeline progress flags
     content_collected: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -179,9 +156,18 @@ class DiscoveredUser(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
-    # Relationships
+    # ── Relationships ─────────────────────────────────────────────────────────
     discovery_job: Mapped["DiscoveryJob"] = relationship(
         "DiscoveryJob", back_populates="discovered_users"
+    )
+    # Many-to-one: many users can be discovered via one similar product.
+    # lazy="select" defers loading until accessed; use selectinload() in queries
+    # that need it to avoid N+1.
+    similar_product: Mapped["SimilarProduct | None"] = relationship(  # type: ignore[name-defined]  # noqa: F821
+        "SimilarProduct",
+        back_populates="discovered_users",
+        foreign_keys=[similar_product_id],
+        lazy="select",
     )
     content_items: Mapped[list["UserContent"]] = relationship(
         "UserContent",
@@ -211,6 +197,11 @@ class DiscoveredUser(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    lead_handles: Mapped[list["LeadHandle"]] = relationship(  # type: ignore[name-defined]  # noqa: F821
+        "LeadHandle",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
 
 # ── User Content ──────────────────────────────────────────────────────────────
@@ -233,19 +224,10 @@ class UserContent(Base):
         index=True,
     )
 
-    # bio | post | comment
     content_type: Mapped[str] = mapped_column(String(20), nullable=False)
-
-    # The actual text. This feeds the NLP pipeline.
     content_text: Mapped[str] = mapped_column(Text, nullable=False)
-
-    # Original URL (subreddit post URL, YouTube video URL, etc.)
     source_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
-
-    # Engagement metric appropriate to platform (Reddit: score/upvotes, YouTube: likes)
     engagement: Mapped[int] = mapped_column(Integer, default=0)
-
-    # When the content was originally posted (if available from the API)
     posted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -253,7 +235,6 @@ class UserContent(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
-    # Relationship
     user: Mapped["DiscoveredUser"] = relationship(
         "DiscoveredUser", back_populates="content_items"
     )
