@@ -6,19 +6,25 @@ Authentication: Application-Only OAuth (client credentials grant).
   - No customer data accessed.
   - Read-only access to all public subreddits.
 
-Credentials required (set in .env by project owner — see CREDENTIALS_REQUIRED.md):
-  REDDIT_CLIENT_ID     — from reddit.com/prefs/apps
-  REDDIT_CLIENT_SECRET — from reddit.com/prefs/apps
-  REDDIT_USER_AGENT    — e.g. "python:PsychographicLeads:1.0 (by u/project_owner)"
+Credentials required (set in .env):
+  REDDIT_CLIENT_ID     — from reddit.com/prefs/apps (the short string under app name)
+  REDDIT_CLIENT_SECRET — from reddit.com/prefs/apps (the "secret" field)
+  REDDIT_USER_AGENT    — e.g. "python:PsychographicLeads:1.0 (by u/Own_Green4956)"
+
+  Registration takes ~90 seconds:
+    1. reddit.com/prefs/apps → "create another app"
+    2. type: script, redirect uri: http://localhost:8080
+    3. Copy client_id (under app name) and secret.
+
+  USERNAME and PASSWORD are NOT required — Application-Only OAuth uses
+  client credentials only, not a user account login.
 
 Rate limit: PRAW enforces Reddit's 60 req/min limit automatically.
 Content per user: settings.DISCOVERY_CONTENT_PER_USER (default 15).
   Rationale: OCEAN prompt uses 8 items; NLP benefits level off after 15.
-  15 items gives >95% of signal value at 60% of API cost vs 25.
 
 post_count: NOT populated for Reddit users.
   Reddit's API exposes karma totals, not actual post counts.
-  Storing an estimate would create false precision in the matching engine.
   follower_count = link_karma + comment_karma (engagement proxy).
 """
 from __future__ import annotations
@@ -31,6 +37,15 @@ from app.ml.discovery.base import BaseDiscoveryProvider, ContentItem, RawDiscove
 from app.ml.discovery.subreddit_map import get_city_subreddits, get_subreddits_for_keywords
 
 logger = logging.getLogger(__name__)
+
+# Subreddits that are private, banned, or redirect and should be skipped.
+# PRAW raises prawcore.exceptions.Redirect or .NotFound for these.
+_SKIP_SUBREDDIT_ERRORS = (
+    "prawcore.exceptions.NotFound",
+    "prawcore.exceptions.Forbidden",
+    "prawcore.exceptions.Redirect",
+    "prawcore.exceptions.BadRequest",
+)
 
 
 def _infer_location(
@@ -151,7 +166,7 @@ class RedditProvider(BaseDiscoveryProvider):
         search_config: dict,
     ) -> list[RawDiscoveredUser]:
         """
-        Step A: map keywords → subreddits.
+        Step A: filter + map keywords → subreddits.
         Step B: search each subreddit with each keyword → extract post authors.
         Step C: fetch author profiles.
         Step D: infer location confidence.
@@ -159,14 +174,29 @@ class RedditProvider(BaseDiscoveryProvider):
         """
         import asyncio
 
+        # Filter out empty/whitespace-only keywords before any API calls.
+        # Empty strings passed to subreddit.search() return arbitrary top posts,
+        # not topic-relevant content, and waste rate-limit quota.
+        clean_keywords = [kw for kw in keywords if kw and kw.strip()]
+        if not clean_keywords:
+            logger.warning("RedditProvider: no valid keywords after filtering — returning empty")
+            return []
+
         # A: Get relevant subreddits
-        topic_subs = get_subreddits_for_keywords(keywords, max_subreddits=8)
+        topic_subs = get_subreddits_for_keywords(clean_keywords, max_subreddits=8)
         city_subs = get_city_subreddits(target_city)
         all_subs = list(dict.fromkeys(topic_subs + city_subs))  # ordered dedup
 
+        if not all_subs:
+            logger.warning(
+                "RedditProvider: no subreddits found for keywords=%s — returning empty",
+                clean_keywords[:6],
+            )
+            return []
+
         logger.info(
             "RedditProvider: subreddits=%s keywords=%s max=%d",
-            all_subs[:6], keywords[:4], max_users,
+            all_subs[:6], clean_keywords[:4], max_users,
         )
 
         seen_usernames: set[str] = set()
@@ -185,9 +215,9 @@ class RedditProvider(BaseDiscoveryProvider):
                 break
             # Pick keywords at stride intervals so coverage is spread evenly
             sub_keywords = [
-                keywords[i]
-                for i in range(sub_idx, len(keywords), max(n_subs, 1))
-            ][:MAX_KW_PER_SUB] or keywords[:MAX_KW_PER_SUB]
+                clean_keywords[i]
+                for i in range(sub_idx, len(clean_keywords), max(n_subs, 1))
+            ][:MAX_KW_PER_SUB] or clean_keywords[:MAX_KW_PER_SUB]
 
             for kw in sub_keywords:
                 if len(result) >= max_users:
@@ -216,10 +246,17 @@ class RedditProvider(BaseDiscoveryProvider):
                             break
 
                 except Exception as exc:
-                    logger.warning(
-                        "RedditProvider: error searching r/%s for %r: %s",
-                        sub_name, kw, exc,
-                    )
+                    exc_type = type(exc).__qualname__
+                    # Log as debug for expected subreddit-level errors (private, banned, redirect)
+                    if any(skip in exc_type for skip in ("NotFound", "Forbidden", "Redirect")):
+                        logger.debug(
+                            "RedditProvider: r/%s skipped (%s)", sub_name, exc_type
+                        )
+                    else:
+                        logger.warning(
+                            "RedditProvider: error searching r/%s for %r: %s",
+                            sub_name, kw, exc,
+                        )
                     continue
 
         logger.info("RedditProvider: discovered %d users", len(result))

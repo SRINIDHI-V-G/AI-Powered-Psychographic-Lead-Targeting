@@ -111,7 +111,14 @@ class Settings(BaseSettings):
     # ── Derived helpers ───────────────────────────────────────────────────────
 
     def reddit_credentials_configured(self) -> bool:
-        return bool(self.REDDIT_CLIENT_ID and self.REDDIT_CLIENT_SECRET)
+        # All three fields are mandatory for Application-Only OAuth.
+        # USER_AGENT is checked because Reddit rejects "python-requests" (PRAW default).
+        return bool(
+            self.REDDIT_CLIENT_ID
+            and self.REDDIT_CLIENT_SECRET
+            and self.REDDIT_USER_AGENT
+            and "project_owner" not in self.REDDIT_USER_AGENT  # reject unconfigured default
+        )
 
     def youtube_credentials_configured(self) -> bool:
         return bool(self.YOUTUBE_API_KEY)
