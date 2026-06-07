@@ -198,6 +198,32 @@ async def export_leads(
     return _build_json_response(rows, filename, product_id, min_score, min_confidence)
 
 
+_CSV_INJECTION_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _sanitize_csv_field(value: object) -> object:
+    """
+    Neutralise CSV injection (also called formula injection).
+
+    Excel, Google Sheets, and LibreOffice interpret cells beginning with
+    =, +, -, @, TAB, or CR as formulas when the file is opened.  A lead's
+    username, display_name, bio, or reasoning could contain such characters
+    (deliberately or incidentally).
+
+    Mitigation: prefix any dangerous string value with a single ASCII quote.
+    The quote is not rendered in the cell but prevents formula evaluation.
+    Numeric types and booleans are returned unchanged — they are never
+    formula-injectable by definition.
+
+    Reference: OWASP CSV Injection — https://owasp.org/www-community/attacks/CSV_Injection
+    """
+    if not isinstance(value, str):
+        return value
+    if value and value[0] in _CSV_INJECTION_PREFIXES:
+        return "'" + value
+    return value
+
+
 def _build_csv_response(rows: list[dict], filename: str) -> StreamingResponse:
     """Stream a UTF-8 CSV with BOM for Excel compatibility."""
     output = io.StringIO()
@@ -209,7 +235,10 @@ def _build_csv_response(rows: list[dict], filename: str) -> StreamingResponse:
     )
     writer.writeheader()
     for row in rows:
-        writer.writerow({k: ("" if row.get(k) is None else row[k]) for k in _CSV_FIELDS})
+        writer.writerow({
+            k: _sanitize_csv_field("" if row.get(k) is None else row[k])
+            for k in _CSV_FIELDS
+        })
 
     csv_content = output.getvalue()
 

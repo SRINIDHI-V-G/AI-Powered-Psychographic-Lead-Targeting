@@ -103,7 +103,6 @@ app.include_router(companies.router, prefix="/api/v1")
 app.include_router(products.router, prefix="/api/v1")
 app.include_router(motivations.router, prefix="/api/v1")
 app.include_router(dashboard.router, prefix="/api/v1")
-app.include_router(demo.router, prefix="/api/v1")
 app.include_router(ollama.router, prefix="/api/v1")
 app.include_router(discovery.router, prefix="/api/v1")
 app.include_router(nlp.router, prefix="/api/v1")
@@ -112,6 +111,12 @@ app.include_router(validation.router, prefix="/api/v1")
 app.include_router(matching.router, prefix="/api/v1")
 app.include_router(product_ocean.router, prefix="/api/v1")
 app.include_router(similar_products.router, prefix="/api/v1")
+
+# Demo router is only registered when explicitly enabled.
+# It must NEVER be registered in production (enforced by warn_missing_credentials).
+if settings.ENABLE_DEMO:
+    app.include_router(demo.router, prefix="/api/v1")
+    logger.warning("Demo router is ACTIVE. Disable in production: ENABLE_DEMO=false")
 
 # ── Static files ───────────────────────────────────────────────────────────────
 

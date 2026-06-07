@@ -6,9 +6,10 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+// Thresholds must match backend: dashboard.py hot>=75, warm>=55
 export function getTier(score: number): LeadTier {
   if (score >= 75) return 'Hot';
-  if (score >= 50) return 'Warm';
+  if (score >= 55) return 'Warm';
   return 'Cold';
 }
 

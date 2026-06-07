@@ -2,9 +2,13 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { getApiKey, setApiKey, removeApiKey, isAuthenticated, setDemoMode } from '../auth';
+import {
+  loginWithKey,
+  logoutSession,
+  checkAuthStatus,
+  setDemoMode,
+} from '../auth';
 import { setupDemo } from '../api/demo';
-import apiClient from '../api/client';
 
 export function useAuth() {
   const router = useRouter();
@@ -12,8 +16,10 @@ export function useAuth() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // On mount, validate auth state via the server-side cookie check.
+  // This is async because JS cannot read HttpOnly cookies directly.
   useEffect(() => {
-    setAuthenticated(isAuthenticated());
+    checkAuthStatus().then(setAuthenticated);
   }, []);
 
   const login = useCallback(
@@ -25,34 +31,36 @@ export function useAuth() {
       setLoading(true);
       setError(null);
       try {
-        // Verify key works by calling /companies/me
-        const { data } = await apiClient.get('/companies/me', {
-          headers: { 'X-API-Key': key },
-        });
-        if (data) {
-          setApiKey(key);
+        const result = await loginWithKey(key.trim());
+        if (result.ok) {
           setAuthenticated(true);
           router.push('/');
           return true;
         }
-        setError('Invalid API key');
-        return false;
-      } catch {
-        setError('Invalid API key or server unreachable');
+        setError(result.error ?? 'Invalid API key');
         return false;
       } finally {
         setLoading(false);
       }
     },
-    [router]
+    [router],
   );
 
   const loginDemo = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
+      // 1. Ask the backend to seed demo data and return a fresh API key.
       const result = await setupDemo();
-      setApiKey(result.api_key);
+
+      // 2. Exchange that key for an HttpOnly session cookie via the auth route.
+      const loginResult = await loginWithKey(result.api_key);
+      if (!loginResult.ok) {
+        setError(loginResult.error ?? 'Failed to establish demo session.');
+        return false;
+      }
+
+      // 3. Store the demo product ID in sessionStorage (not a secret).
       setDemoMode(result.product_id);
       setAuthenticated(true);
       router.push('/');
@@ -65,11 +73,11 @@ export function useAuth() {
     }
   }, [router]);
 
-  const logout = useCallback(() => {
-    removeApiKey();
+  const logout = useCallback(async () => {
+    await logoutSession();
     setAuthenticated(false);
     router.push('/login');
   }, [router]);
 
-  return { authenticated, loading, error, login, loginDemo, logout, getApiKey };
+  return { authenticated, loading, error, login, loginDemo, logout };
 }

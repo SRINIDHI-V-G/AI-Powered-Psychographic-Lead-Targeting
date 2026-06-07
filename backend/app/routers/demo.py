@@ -1,13 +1,38 @@
 """
 Demo router — instant full-pipeline simulation for live demos.
-No authentication required. All endpoints return realistic mock data instantly.
+
+SECURITY: This router must only be registered when settings.ENABLE_DEMO=True.
+All endpoints require the X-Demo-Secret header matching settings.DEMO_SECRET.
+Never enable in production.
 """
 import hashlib
 import secrets
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import settings
+
+
+def _require_demo_secret(
+    x_demo_secret: str | None = Header(
+        None,
+        description="Demo secret token. Required on all demo endpoints.",
+    )
+) -> None:
+    """Dependency that enforces the demo secret on every demo endpoint."""
+    if not settings.DEMO_SECRET:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Demo mode is not configured.",
+        )
+    if not x_demo_secret or x_demo_secret != settings.DEMO_SECRET:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing demo secret.",
+            headers={"WWW-Authenticate": "DemoSecret"},
+        )
 
 from app.database import get_db
 from app.models.discovery import DiscoveryJob, DiscoveredUser, UserContent
@@ -124,7 +149,10 @@ _SAMPLE_POSTS = {
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/setup", summary="One-click demo: create company + product + seed full pipeline data")
-async def setup_demo(db: AsyncSession = Depends(get_db)):
+async def setup_demo(
+    _secret: None = Depends(_require_demo_secret),
+    db: AsyncSession = Depends(get_db),
+):
     # ── 1. Get or create demo company ────────────────────────────────────────
     company = await get_company_by_email(db, DEMO_EMAIL)
     if not company:
@@ -194,7 +222,11 @@ async def setup_demo(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/{product_id}/instant", summary="Instantly run full pipeline for existing product")
-async def run_instant_pipeline(product_id: UUID, db: AsyncSession = Depends(get_db)):
+async def run_instant_pipeline(
+    product_id: UUID,
+    _secret: None = Depends(_require_demo_secret),
+    db: AsyncSession = Depends(get_db),
+):
     product = await db.get(Product, product_id)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -208,7 +240,10 @@ async def run_instant_pipeline(product_id: UUID, db: AsyncSession = Depends(get_
 
 
 @router.get("/{product_id}/users", summary="Get mock discovered users")
-async def get_demo_users(product_id: str):
+async def get_demo_users(
+    product_id: str,
+    _secret: None = Depends(_require_demo_secret),
+):
     return {
         "product_id": product_id,
         "total_discovered": 847,
@@ -219,7 +254,10 @@ async def get_demo_users(product_id: str):
 
 
 @router.get("/{product_id}/leads", summary="Get mock ranked leads")
-async def get_demo_leads(product_id: str):
+async def get_demo_leads(
+    product_id: str,
+    _secret: None = Depends(_require_demo_secret),
+):
     return {
         "product_id": product_id,
         "total": len(MOCK_USERS),
@@ -232,7 +270,10 @@ async def get_demo_leads(product_id: str):
 
 
 @router.get("/{product_id}/stats", summary="Get mock pipeline stats")
-async def get_demo_stats(product_id: str):
+async def get_demo_stats(
+    product_id: str,
+    _secret: None = Depends(_require_demo_secret),
+):
     return {
         "pipeline_steps_completed": 9,
         "users_discovered": 847,

@@ -14,10 +14,11 @@ class Settings(BaseSettings):
     REDIS_URL: str = ""
 
     # ── CORS ──────────────────────────────────────────────────────────────────
-    # List of allowed origins. Wildcard is acceptable for dev only.
-    # Set to your frontend domain(s) before production:
+    # Explicit allowlist of origins. Must be set before production deployment.
+    # Development default permits localhost only.
+    # Production example:
     #   CORS_ORIGINS=https://app.example.com,https://staging.example.com
-    CORS_ORIGINS: list[str] = ["*"]
+    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:3001"]
 
     # ── Ollama / LLM ──────────────────────────────────────────────────────────
     OLLAMA_BASE_URL: str = "http://localhost:11434"
@@ -84,6 +85,14 @@ class Settings(BaseSettings):
     # Separate from OLLAMA_TIMEOUT so the two pipelines can be tuned independently.
     SIMILAR_PRODUCTS_LLM_TIMEOUT: float = 120.0
 
+    # ── Demo mode ─────────────────────────────────────────────────────────────
+    # DISABLED by default. Set ENABLE_DEMO=true only in development/staging.
+    # NEVER enable in production — demo endpoints create API keys without auth.
+    # DEMO_SECRET: a bearer token callers must supply to reach demo endpoints.
+    # Generate with: python -c "import secrets; print(secrets.token_hex(32))"
+    ENABLE_DEMO: bool = False
+    DEMO_SECRET: str = ""
+
     # ── Celery / background task dispatch ────────────────────────────────────
     # Set USE_CELERY=True + configure REDIS_URL to enable Celery task queue.
     # When False (default), all pipeline stages run as asyncio background tasks
@@ -144,6 +153,47 @@ settings = Settings()
 
 def warn_missing_credentials() -> None:
     """Log startup warnings for unconfigured external credentials."""
+
+    # ── Production safety checks (hard errors on misconfiguration) ───────────
+    is_prod = settings.ENVIRONMENT.lower() == "production"
+
+    if is_prod and "*" in settings.CORS_ORIGINS:
+        raise RuntimeError(
+            "FATAL: CORS_ORIGINS contains '*' in a production environment. "
+            "Set CORS_ORIGINS to your frontend domain(s) before starting the server. "
+            "Example: CORS_ORIGINS=https://app.example.com"
+        )
+
+    if is_prod and settings.ENABLE_DEMO:
+        raise RuntimeError(
+            "FATAL: ENABLE_DEMO=true is not allowed in a production environment. "
+            "Demo endpoints create API keys without authentication. "
+            "Remove ENABLE_DEMO from your production .env file."
+        )
+
+    if settings.ENABLE_DEMO and not settings.DEMO_SECRET:
+        raise RuntimeError(
+            "ENABLE_DEMO=true requires DEMO_SECRET to be set. "
+            "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
+        )
+
+    # ── Origin summary ───────────────────────────────────────────────────────
+    if "*" in settings.CORS_ORIGINS:
+        logger.warning(
+            "⚠️  CORS_ORIGINS is '*' — all origins are allowed. "
+            "Acceptable in development only. Set explicit origins before deploying."
+        )
+    else:
+        logger.info("✓ CORS restricted to: %s", settings.CORS_ORIGINS)
+
+    # ── Demo mode ────────────────────────────────────────────────────────────
+    if settings.ENABLE_DEMO:
+        logger.warning(
+            "⚠️  Demo mode ENABLED. Demo endpoints are active. "
+            "Never enable in production."
+        )
+
+    # ── Discovery credentials ────────────────────────────────────────────────
     if not settings.reddit_credentials_configured():
         logger.warning(
             "⚠️  Reddit credentials not configured. "

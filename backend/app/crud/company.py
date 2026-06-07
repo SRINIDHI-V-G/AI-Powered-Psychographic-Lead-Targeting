@@ -3,6 +3,7 @@ import secrets
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+
 from app.models.company import Company
 from app.schemas.company import CompanyCreate
 
@@ -46,16 +47,14 @@ async def get_company_by_api_key(db: AsyncSession, api_key: str) -> Company | No
     return result.scalar_one_or_none()
 
 
-async def get_all_companies(
-    db: AsyncSession,
-    skip: int = 0,
-    limit: int = 20,
-) -> list[Company]:
-    result = await db.execute(
-        select(Company)
-        .where(Company.is_active == True)  # noqa: E712
-        .order_by(Company.created_at.desc())
-        .offset(skip)
-        .limit(limit)
-    )
-    return list(result.scalars().all())
+async def rotate_api_key(db: AsyncSession, company: Company) -> str:
+    """
+    Atomically replace the company's API key with a new one.
+    Returns the new plaintext key — the only time it is ever available.
+    The old key is immediately invalidated: any request using it will receive 401.
+    """
+    new_raw_key = secrets.token_hex(32)
+    company.api_key = _hash_key(new_raw_key)
+    await db.commit()
+    await db.refresh(company)
+    return new_raw_key

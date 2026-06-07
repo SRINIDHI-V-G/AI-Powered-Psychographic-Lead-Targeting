@@ -1,17 +1,20 @@
 import axios from 'axios';
-import { getApiKey } from '../auth';
 
+/**
+ * Axios client for all /api/v1/* requests.
+ *
+ * Authentication: the X-API-Key header is injected by Next.js middleware
+ * (src/middleware.ts) which reads the HttpOnly pl_session cookie server-side.
+ * This client intentionally does NOT read or forward any API key from
+ * client-accessible storage — doing so would reintroduce the XSS risk.
+ *
+ * withCredentials: true ensures the browser sends the pl_session cookie
+ * with every same-origin request so the middleware can read it.
+ */
 const apiClient = axios.create({
   baseURL: '/api/v1',
   timeout: 30000,
-});
-
-apiClient.interceptors.request.use((config) => {
-  const key = getApiKey();
-  if (key) {
-    config.headers['X-API-Key'] = key;
-  }
-  return config;
+  withCredentials: true,
 });
 
 apiClient.interceptors.response.use(
@@ -23,18 +26,14 @@ apiClient.interceptors.response.use(
       }
     }
     return Promise.reject(error);
-  }
+  },
 );
 
 export default apiClient;
 
-export async function downloadWithAuth(
-  url: string,
-  filename: string
-): Promise<void> {
-  const key = getApiKey();
+export async function downloadWithAuth(url: string, filename: string): Promise<void> {
   const response = await fetch(url, {
-    headers: key ? { 'X-API-Key': key } : {},
+    credentials: 'include',  // send pl_session cookie so middleware injects X-API-Key
   });
   if (!response.ok) throw new Error('Download failed');
   const blob = await response.blob();

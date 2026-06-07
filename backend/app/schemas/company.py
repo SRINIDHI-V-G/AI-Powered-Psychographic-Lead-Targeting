@@ -37,3 +37,10 @@ class CompanyResponse(CompanyPublic):
     api_key: str
 
     model_config = {"from_attributes": True}
+
+
+class ApiKeyRotateResponse(BaseModel):
+    """Returned only on POST /companies/me/rotate-key — new plaintext key."""
+    id: UUID
+    api_key: str
+    message: str

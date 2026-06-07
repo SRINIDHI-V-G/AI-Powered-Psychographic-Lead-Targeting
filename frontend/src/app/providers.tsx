@@ -5,30 +5,53 @@ import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { Toaster } from 'sonner';
 import { useState, useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { isAuthenticated } from '@/lib/auth';
+import { checkAuthStatus, logoutSession } from '@/lib/auth';
 
 const PUBLIC_PATHS = ['/login'];
 
+/**
+ * AuthGuard — enforces authentication on all non-public routes.
+ *
+ * Uses an async server-side cookie check (via /api/auth/me) because the
+ * API key is stored in an HttpOnly cookie that JS cannot read directly.
+ *
+ * Renders null while the check is in flight to avoid a flash of protected
+ * content. Once checked, either the children render or the user is redirected.
+ */
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const [checked, setChecked] = useState(false);
 
   useEffect(() => {
-    if (!PUBLIC_PATHS.includes(pathname) && !isAuthenticated()) {
-      router.replace('/login');
-    } else {
+    if (PUBLIC_PATHS.includes(pathname)) {
       setChecked(true);
+      return;
     }
+
+    checkAuthStatus().then((ok) => {
+      if (!ok) {
+        router.replace('/login');
+      } else {
+        setChecked(true);
+      }
+    });
   }, [pathname, router]);
 
+  // Listen for 401/403 responses from the backend (e.g., key rotated by admin).
   useEffect(() => {
-    const handler = () => router.replace('/login');
+    const handler = async () => {
+      await logoutSession();
+      router.replace('/login');
+    };
     window.addEventListener('auth:unauthorized', handler);
     return () => window.removeEventListener('auth:unauthorized', handler);
   }, [router]);
 
-  if (!checked && !PUBLIC_PATHS.includes(pathname)) return null;
+  // Render nothing until auth state is confirmed, preventing a flash of
+  // protected content before the redirect fires.
+  if (!checked) return null;
+
   return <>{children}</>;
 }
 
@@ -42,7 +65,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
             refetchOnWindowFocus: false,
           },
         },
-      })
+      }),
   );
 
   return (

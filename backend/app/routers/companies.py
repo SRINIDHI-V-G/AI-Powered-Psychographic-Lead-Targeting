@@ -1,10 +1,20 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.crud.company import (
+    create_company,
+    get_company_by_email,
+    rotate_api_key,
+)
 from app.database import get_db
 from app.dependencies import get_current_company
 from app.models.company import Company
-from app.schemas.company import CompanyCreate, CompanyPublic, CompanyResponse
-from app.crud.company import create_company, get_company_by_email, get_all_companies
+from app.schemas.company import (
+    ApiKeyRotateResponse,
+    CompanyCreate,
+    CompanyPublic,
+    CompanyResponse,
+)
 
 router = APIRouter(prefix="/companies", tags=["Companies"])
 
@@ -57,14 +67,28 @@ async def get_my_company(
     return company
 
 
-@router.get(
-    "/",
-    response_model=list[CompanyPublic],
-    summary="List all registered companies",
+@router.post(
+    "/me/rotate-key",
+    response_model=ApiKeyRotateResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Rotate the API key for the authenticated company",
+    description=(
+        "Generates a new API key and immediately invalidates the current one. "
+        "The new key is returned once in plaintext — store it immediately. "
+        "All existing sessions using the old key will receive 401 on the next request."
+    ),
 )
-async def list_companies(
-    skip: int = 0,
-    limit: int = 20,
+async def rotate_company_key(
+    company: Company = Depends(get_current_company),
     db: AsyncSession = Depends(get_db),
-) -> list[CompanyPublic]:
-    return await get_all_companies(db, skip=skip, limit=limit)
+) -> ApiKeyRotateResponse:
+    new_raw_key = await rotate_api_key(db, company)
+    return ApiKeyRotateResponse(
+        id=company.id,
+        api_key=new_raw_key,
+        message=(
+            "API key rotated successfully. "
+            "Your previous key is now invalid. "
+            "Update all integrations immediately."
+        ),
+    )
