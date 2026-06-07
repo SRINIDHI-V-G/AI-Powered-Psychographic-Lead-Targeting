@@ -48,9 +48,18 @@ export default function DashboardPage() {
     },
   ].filter((d) => d.value > 0);
 
-  const sourceData = [
-    { name: 'Mock', value: data.total_discovered_users, color: '#94a3b8' },
-  ];
+  // Provider colours — keyed by provider_name from DiscoveryJob
+  const PROVIDER_COLORS: Record<string, string> = {
+    reddit:    '#ff4500',
+    instagram: '#e1306c',
+    youtube:   '#ff0000',
+    mock:      '#94a3b8',
+  };
+  const sourceData = (data.discovery_sources ?? []).map((s) => ({
+    name: s.provider.charAt(0).toUpperCase() + s.provider.slice(1),
+    value: s.users_discovered,
+    color: PROVIDER_COLORS[s.provider.toLowerCase()] ?? '#64748b',
+  }));
 
   // Aggregate motivation categories from recent activity
   const motivationCats = data.products.map((p) => ({

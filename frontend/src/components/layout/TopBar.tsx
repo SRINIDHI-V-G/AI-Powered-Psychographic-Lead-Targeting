@@ -2,9 +2,8 @@
 
 import { Lightbulb, RotateCcw, Play, LogOut } from 'lucide-react';
 import { useAuth } from '@/lib/hooks/useAuth';
-import { isDemoMode } from '@/lib/auth';
+import { isDemoMode, loginWithKey, setDemoMode } from '@/lib/auth';
 import { setupDemo } from '@/lib/api/demo';
-import { setApiKey, setDemoMode } from '@/lib/auth';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
@@ -23,7 +22,8 @@ export function TopBar() {
   const handleResetDemo = async () => {
     try {
       const result = await setupDemo();
-      setApiKey(result.api_key);
+      const loginResult = await loginWithKey(result.api_key);
+      if (!loginResult.ok) throw new Error(loginResult.error);
       setDemoMode(result.product_id);
       qc.clear();
       toast.success('Demo reset');
@@ -36,7 +36,8 @@ export function TopBar() {
   const handleRunDemo = async () => {
     try {
       const result = await setupDemo();
-      setApiKey(result.api_key);
+      const loginResult = await loginWithKey(result.api_key);
+      if (!loginResult.ok) throw new Error(loginResult.error);
       setDemoMode(result.product_id);
       qc.clear();
       toast.success('Demo started');

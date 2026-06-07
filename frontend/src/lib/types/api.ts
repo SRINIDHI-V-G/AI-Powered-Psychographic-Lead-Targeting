@@ -88,12 +88,18 @@ export interface ActivityEvent {
   occurred_at: string;
 }
 
+export interface ProviderBreakdown {
+  provider: string;       // "reddit" | "instagram" | "youtube" | "mock"
+  users_discovered: number;
+}
+
 export interface DashboardOverview {
   total_products: number;
   total_discovered_users: number;
   hot_leads_count: number;
   warm_leads_count: number;
   active_pipeline_jobs: number;
+  discovery_sources: ProviderBreakdown[];
   products: DashboardProductItem[];
   recent_activity: ActivityEvent[];
   generated_at: string;

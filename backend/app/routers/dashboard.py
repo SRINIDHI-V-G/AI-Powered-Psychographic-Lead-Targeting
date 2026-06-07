@@ -45,6 +45,11 @@ class ActivityEvent(BaseModel):
     occurred_at: datetime
 
 
+class ProviderBreakdown(BaseModel):
+    provider: str        # "reddit" | "instagram" | "youtube" | "mock"
+    users_discovered: int
+
+
 class DashboardOverviewResponse(BaseModel):
     # Headline stats
     total_products: int
@@ -52,6 +57,9 @@ class DashboardOverviewResponse(BaseModel):
     hot_leads_count: int
     warm_leads_count: int
     active_pipeline_jobs: int       # discovery jobs currently running
+
+    # Real provider breakdown — populated from discovery_jobs.provider_name
+    discovery_sources: list[ProviderBreakdown]
 
     # Per-product summary
     products: list[ProductPipelineSummary]
@@ -146,6 +154,24 @@ async def get_dashboard_overview(
     )
     active_jobs: int = active_r.scalar_one()
 
+    # ── 4b. Provider breakdown (users discovered per provider) ────────────────
+    provider_r = await db.execute(
+        select(
+            DiscoveryJob.provider_name,
+            func.sum(DiscoveryJob.users_discovered).label("total"),
+        )
+        .where(
+            DiscoveryJob.product_id.in_(product_ids),
+            DiscoveryJob.status == "completed",
+        )
+        .group_by(DiscoveryJob.provider_name)
+    )
+    discovery_sources = [
+        ProviderBreakdown(provider=row.provider_name, users_discovered=int(row.total or 0))
+        for row in provider_r
+        if row.total and int(row.total) > 0
+    ]
+
     # ── 5. Per-product summaries ──────────────────────────────────────────────
     product_summaries = [
         ProductPipelineSummary(
@@ -228,6 +254,7 @@ async def get_dashboard_overview(
         hot_leads_count=total_hot,
         warm_leads_count=total_warm,
         active_pipeline_jobs=active_jobs,
+        discovery_sources=discovery_sources,
         products=product_summaries,
         recent_activity=activity,
         generated_at=datetime.now(timezone.utc),
