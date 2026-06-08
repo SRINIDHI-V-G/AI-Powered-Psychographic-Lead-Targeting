@@ -8,7 +8,7 @@ export default function ProductLayout({
   params: { id: string };
 }) {
   return (
-    <div className="flex flex-1 overflow-hidden -m-6">
+    <div className="flex flex-1 overflow-hidden">
       <ProductSidebar productId={params.id} />
       <main className="flex-1 overflow-y-auto p-6">
         {children}

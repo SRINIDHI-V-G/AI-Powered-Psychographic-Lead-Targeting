@@ -1,6 +1,8 @@
 'use client';
 
-import { Lightbulb, RotateCcw, Play, LogOut } from 'lucide-react';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import { Lightbulb, RotateCcw, Play, LogOut, LayoutGrid } from 'lucide-react';
 import { useAuth } from '@/lib/hooks/useAuth';
 import { isDemoMode, loginWithKey, setDemoMode } from '@/lib/auth';
 import { storeApiKey } from '@/lib/api/client';
@@ -9,12 +11,14 @@ import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { cn } from '@/lib/utils';
 
 export function TopBar() {
   const { logout } = useAuth();
   const [demo, setDemo] = useState(false);
   const qc = useQueryClient();
   const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
     setDemo(isDemoMode());
@@ -63,6 +67,21 @@ export function TopBar() {
           </span>
         )}
       </div>
+
+      <nav className="flex items-center gap-1">
+        <Link
+          href="/products"
+          className={cn(
+            'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition',
+            pathname.startsWith('/products')
+              ? 'bg-indigo-700 text-white'
+              : 'text-slate-300 hover:bg-indigo-800 hover:text-white'
+          )}
+        >
+          <LayoutGrid size={13} />
+          Products
+        </Link>
+      </nav>
 
       <div className="flex items-center gap-1.5">
         <span className="w-2 h-2 rounded-full bg-green-400" />

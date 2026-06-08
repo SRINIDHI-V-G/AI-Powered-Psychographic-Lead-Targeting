@@ -4,10 +4,10 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard,
-  Package,
-  Brain,
-  Users,
+  Search,
   Trophy,
+  Brain,
+  BarChart2,
   CheckCircle2,
   Circle,
   Loader2,
@@ -40,11 +40,11 @@ export function ProductSidebar({ productId }: ProductSidebarProps) {
   const running = ['processing', 'discovering', 'nlp_processing', 'ocean_scoring', 'matching', 'ranking'].includes(status?.status ?? '');
 
   const navItems = [
-    { href: base, label: 'Overview', icon: LayoutDashboard },
-    { href: `${base}/product`, label: 'Product', icon: Package },
-    { href: `${base}/motivations`, label: 'AI Motivations', icon: Brain },
-    { href: `${base}/discovery`, label: 'Discovered Users', icon: Users },
-    { href: `${base}/leads`, label: 'Lead Rankings', icon: Trophy },
+    { href: base,                    label: 'Overview',       icon: LayoutDashboard },
+    { href: `${base}/discovery`,     label: 'Discovery',      icon: Search },
+    { href: `${base}/leads`,         label: 'Leads',          icon: Trophy },
+    { href: `${base}/ocean`,         label: 'OCEAN Profiles', icon: Brain },
+    { href: `${base}/analytics`,     label: 'Analytics',      icon: BarChart2 },
   ];
 
   return (

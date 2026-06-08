@@ -6,7 +6,7 @@ import { Toaster } from 'sonner';
 import { useState, useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { checkAuthStatus, logoutSession } from '@/lib/auth';
-import { clearApiKey } from '@/lib/api/client';
+import { clearApiKey, storeApiKey } from '@/lib/api/client';
 
 const PUBLIC_PATHS = ['/login'];
 
@@ -36,10 +36,24 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    checkAuthStatus().then((ok) => {
+    checkAuthStatus().then(async (ok) => {
       if (!ok) {
         router.replace('/login');
       } else {
+        // Restore the API key to sessionStorage if it was cleared (e.g. browser restart).
+        // The HttpOnly cookie survives restarts; sessionStorage does not.
+        if (typeof window !== 'undefined' && !sessionStorage.getItem('pl_api_key')) {
+          try {
+            const res = await fetch('/api/auth/key');
+            if (res.ok) {
+              const { api_key } = await res.json() as { api_key: string };
+              storeApiKey(api_key);
+            }
+          } catch {
+            // Non-fatal: if this fails, API calls will 401 and the global
+            // auth:unauthorized handler will redirect to login.
+          }
+        }
         setChecked(true);
       }
     });
