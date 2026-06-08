@@ -27,7 +27,7 @@ import logging
 import traceback
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
@@ -268,7 +268,14 @@ async def run_matching_for_product(db: AsyncSession, product_id: UUID) -> dict:
         _log, len(categories),
     )
 
-    # ── 3. Clear stale matches for this product ───────────────────────────────
+    # ── 3. Acquire advisory lock + clear stale matches ───────────────────────
+    # The advisory lock serialises concurrent matching runs for the same product
+    # (e.g. auto-trigger from OCEAN + explicit call from E2E script running in
+    # parallel).  It is transaction-scoped: released automatically on COMMIT/ROLLBACK.
+    lock_key = int.from_bytes(product_id.bytes[:8], "big") % (2**62)
+    await db.execute(text("SELECT pg_advisory_xact_lock(:k)").bindparams(k=lock_key))
+    logger.debug("%s advisory lock acquired (key=%d)", _log, lock_key)
+
     await db.execute(
         delete(LeadMatch).where(LeadMatch.product_id == product_id)
     )

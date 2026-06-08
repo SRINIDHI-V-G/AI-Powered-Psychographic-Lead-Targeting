@@ -103,4 +103,5 @@ class AllProvidersStatusResponse(BaseModel):
     youtube: ProviderInfo
     instagram: ProviderInfo
     reddit: ProviderInfo
+    google_reviews: ProviderInfo
     mock_mode: bool

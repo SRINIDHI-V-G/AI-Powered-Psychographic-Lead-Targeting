@@ -277,7 +277,7 @@ class TestGoogleReviewsProviderDiscoverUsers:
         assert len(result) > 0
         u = result[0]
         assert u.platform == "google_reviews"
-        assert u.source_provider == "google_places_api_v2"
+        assert u.source_provider == "google_places_api_v1"
         assert u.platform_user_id == "109876543210"
         assert u.username == "109876543210"
         assert u.display_name == "Priya Sharma"

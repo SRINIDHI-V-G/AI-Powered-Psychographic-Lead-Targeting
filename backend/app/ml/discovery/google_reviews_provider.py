@@ -49,16 +49,16 @@ from app.ml.discovery.base import BaseDiscoveryProvider, ContentItem, RawDiscove
 
 logger = logging.getLogger(__name__)
 
-_PLACES_BASE = "https://places.googleapis.com/v2"
+_PLACES_BASE = "https://places.googleapis.com/v1"
 _REQUEST_SLEEP = 0.2  # seconds between API calls
 
-# Fields requested from Places API — only what the provider needs.
-# reviews is "Atmosphere" tier; everything else is "Basic".
+# Fields for Text Search — Basic tier only (no billing required for these).
+# reviews are fetched separately via Place Details (_fetch_place_reviews) which
+# reliably returns the Atmosphere tier data once GCP billing is enabled.
 _FIELD_MASK = (
     "places.id,"
     "places.displayName,"
     "places.formattedAddress,"
-    "places.reviews,"
     "places.rating,"
     "places.userRatingCount"
 )
@@ -118,12 +118,49 @@ class GoogleReviewsProvider(BaseDiscoveryProvider):
         return ["*"]
 
     async def health_check(self) -> dict:
+        """
+        Two-stage health check:
+          1. Text Search reachable (Basic tier — always works if API key is valid)
+          2. Reviews field populated (Atmosphere tier — requires GCP billing enabled)
+
+        Returns ok=True only if both tiers are accessible.  If billing is not
+        enabled, the 'detail' message includes exact GCP setup instructions.
+        """
         try:
             places = await self._search_places("coffee shop", max_results=1, city=None)
+            if not places:
+                return {
+                    "ok": False,
+                    "provider": self.name,
+                    "detail": "Places API reachable but returned 0 results for 'coffee shop'",
+                }
+
+            place_id = places[0].get("id", "")
+            if not place_id:
+                return {
+                    "ok": True,
+                    "provider": self.name,
+                    "detail": f"Places API reachable (places={len(places)}) — no place_id to test reviews",
+                }
+
+            # Stage 2: verify Atmosphere tier (reviews) is accessible
+            has_reviews = await self._check_reviews_accessible(place_id)
+            if not has_reviews:
+                return {
+                    "ok": False,
+                    "provider": self.name,
+                    "detail": (
+                        "Places API reachable but reviews field is empty. "
+                        "GCP billing must be enabled for the Atmosphere data tier. "
+                        "Go to console.cloud.google.com -> Billing -> Link a billing account "
+                        "to your project. The $200/month free credit covers all dev usage."
+                    ),
+                }
+
             return {
                 "ok": True,
                 "provider": self.name,
-                "detail": f"Places API reachable (places_returned={len(places)})",
+                "detail": f"Places API reachable and reviews accessible (place_id={place_id[:20]}...)",
             }
         except Exception as exc:
             return {"ok": False, "provider": self.name, "detail": str(exc)}
@@ -147,6 +184,7 @@ class GoogleReviewsProvider(BaseDiscoveryProvider):
 
         seen_contributor_ids: set[str] = set()
         result: list[RawDiscoveredUser] = []
+        _billing_confirmed: bool | None = None  # True/False/None (not yet checked)
 
         active_keywords = keywords[:max_kw]
 
@@ -177,7 +215,30 @@ class GoogleReviewsProvider(BaseDiscoveryProvider):
                 place_rating = place.get("rating", 0)
                 place_review_count = place.get("userRatingCount", 0)
 
+                # Text Search returns Basic-tier data only; reviews (Atmosphere tier)
+                # require a separate Place Details call.
                 reviews: list[dict] = place.get("reviews", [])
+                if not reviews and place_id:
+                    # Fast-fail: if the first Place Details call returned no reviews,
+                    # stop making more calls — billing is almost certainly not enabled.
+                    if _billing_confirmed is False:
+                        continue
+                    reviews = await self._fetch_place_reviews(place_id)
+                    if not reviews and _billing_confirmed is None:
+                        # First call returned empty — assume billing not enabled.
+                        # Log clearly and abort further Place Details calls.
+                        logger.warning(
+                            "GoogleReviewsProvider: Place Details returned no reviews "
+                            "for place_id=%s. GCP billing (Atmosphere tier) is likely not "
+                            "enabled. Enable billing at console.cloud.google.com -> Billing "
+                            "to access the reviews field. Skipping remaining Place Details "
+                            "calls to avoid wasted API quota.",
+                            place_id,
+                        )
+                        _billing_confirmed = False
+                    elif reviews:
+                        _billing_confirmed = True
+
                 if not reviews:
                     continue
 
@@ -207,7 +268,7 @@ class GoogleReviewsProvider(BaseDiscoveryProvider):
 
                     user = RawDiscoveredUser(
                         platform="google_reviews",
-                        source_provider="google_places_api_v2",
+                        source_provider="google_places_api_v1",
                         platform_user_id=contributor_id,
                         username=contributor_id,
                         display_name=display_name,
@@ -287,6 +348,56 @@ class GoogleReviewsProvider(BaseDiscoveryProvider):
         return items[:max_items]
 
     # ── Places API helpers ────────────────────────────────────────────────────
+
+    async def _check_reviews_accessible(self, place_id: str) -> bool:
+        """
+        Call Place Details for a known place and check whether the reviews
+        field is populated.  Returns False when billing is not enabled for
+        the Atmosphere tier (reviews silently absent even with HTTP 200).
+        """
+        try:
+            await asyncio.sleep(_REQUEST_SLEEP)
+            headers = {
+                "X-Goog-Api-Key": self._api_key,
+                "X-Goog-FieldMask": "reviews,rating,userRatingCount",
+            }
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(
+                    f"{_PLACES_BASE}/places/{place_id}",
+                    headers=headers,
+                )
+            if resp.status_code != 200:
+                return False
+            data = resp.json()
+            # rating/userRatingCount (Pro tier) work without Atmosphere billing.
+            # reviews (Atmosphere tier) is the specific field we need — it requires
+            # GCP billing to be enabled.  Check explicitly for reviews presence.
+            return bool(data.get("reviews"))
+        except Exception:
+            return False
+
+    async def _fetch_place_reviews(self, place_id: str) -> list[dict]:
+        """
+        Fetch up to 5 reviews for a specific place via the Place Details endpoint.
+        Returns an empty list when billing is not enabled or the place has no reviews.
+        """
+        try:
+            await asyncio.sleep(_REQUEST_SLEEP)
+            headers = {
+                "X-Goog-Api-Key": self._api_key,
+                "X-Goog-FieldMask": "reviews",
+            }
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                resp = await client.get(
+                    f"{_PLACES_BASE}/places/{place_id}",
+                    headers=headers,
+                )
+            if resp.status_code != 200:
+                return []
+            return resp.json().get("reviews", [])
+        except Exception as exc:
+            logger.debug("_fetch_place_reviews failed for %s: %s", place_id, exc)
+            return []
 
     async def _search_places(
         self,

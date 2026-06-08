@@ -102,17 +102,29 @@ async def discovery_provider_status() -> AllProvidersStatusResponse:
         except Exception as exc:
             return ProviderInfo(configured=True, healthy=False, detail=str(exc))
 
+    async def _check_google_reviews() -> ProviderInfo:
+        if not settings.google_places_credentials_configured():
+            return ProviderInfo(configured=False, healthy=False, detail="GOOGLE_PLACES_API_KEY not set")
+        try:
+            from app.ml.discovery.google_reviews_provider import GoogleReviewsProvider
+            result = await GoogleReviewsProvider().health_check()
+            return ProviderInfo(configured=True, healthy=result["ok"], detail=result["detail"])
+        except Exception as exc:
+            return ProviderInfo(configured=True, healthy=False, detail=str(exc))
+
     import asyncio
-    youtube, reddit, instagram = await asyncio.gather(
+    youtube, reddit, instagram, google_reviews = await asyncio.gather(
         _check_youtube(),
         _check_reddit(),
         _check_instagram(),
+        _check_google_reviews(),
     )
 
     return AllProvidersStatusResponse(
         youtube=youtube,
         reddit=reddit,
         instagram=instagram,
+        google_reviews=google_reviews,
         mock_mode=settings.use_mock_discovery(),
     )
 

@@ -139,17 +139,23 @@ def _select_provider(
 def _get_provider(
     product_category: str = "",
     product_region: str = "",
+    preferred_provider: str = "",
 ) -> BaseDiscoveryProvider:
     """
     Return the appropriate discovery provider for a given product.
 
     Selection order:
-      1. Best real provider from registry (Reddit → YouTube based on credentials)
-      2. MockDiscoveryProvider as fallback when no real credentials are configured
+      1. preferred_provider (if set in search_config and credentials are configured)
+      2. Best real provider from registry (Reddit → YouTube → Instagram → GoogleReviews)
+      3. MockDiscoveryProvider as fallback when no real credentials are configured
+
+    preferred_provider can be set in job search_config to force a specific
+    provider regardless of registry priority order.  Useful for testing and
+    for products where a specific platform is known to have better coverage.
 
     Uses MockDiscoveryProvider when:
       - MOCK_DISCOVERY=True in .env
-      - Neither Reddit nor YouTube credentials are configured
+      - No credentials are configured for any provider
       - No registered provider supports the product's category/region
     """
     if settings.MOCK_DISCOVERY:
@@ -158,6 +164,22 @@ def _get_provider(
         return MockDiscoveryProvider(delay_ms=0)
 
     registry = _build_provider_registry()
+
+    # Honour preferred_provider from search_config when set
+    if preferred_provider:
+        pref_lower = preferred_provider.lower()
+        for p in registry:
+            if p.name == pref_lower:
+                logger.info(
+                    "DiscoveryOrchestrator: using preferred_provider=%s", p.name
+                )
+                return p
+        logger.warning(
+            "DiscoveryOrchestrator: preferred_provider=%r not available "
+            "(not configured or failed to init) — falling back to auto-select",
+            preferred_provider,
+        )
+
     provider = _select_provider(registry, product_category, product_region)
 
     if provider is None:
@@ -270,9 +292,11 @@ class DiscoveryOrchestrator:
                 )
 
             # ── 3. Select provider + discover ─────────────────────────────────
+            preferred = (job.search_config or {}).get("preferred_provider", "")
             provider = _get_provider(
                 product_category=product.category or "",
                 product_region=product.target_country or "",
+                preferred_provider=preferred,
             )
             job.provider_name = provider.name
             job.sources = [provider.platform]

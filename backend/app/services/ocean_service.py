@@ -124,7 +124,14 @@ async def _score_user(
     nlp: UserNlpFeatures,
 ) -> dict:
     """
-    Attempt LLM scoring; fall back to heuristic on any error.
+    Score a user's OCEAN personality via Ollama LLM.
+
+    Fallback policy:
+      - USE_MOCK_LLM=True           → heuristic (explicit opt-in, testing only)
+      - Ollama not reachable         → heuristic (Ollama service down)
+      - Ollama server error (5xx)    → raises RuntimeError (OOM, model missing — operator must fix)
+      - Ollama timeout               → raises TimeoutError (model too slow — switch model)
+      - Response unparseable         → raises RuntimeError (model produced bad output)
     """
     if settings.USE_MOCK_LLM:
         logger.info("[OCEAN] USE_MOCK_LLM=True — using heuristic for %s", user.username)
@@ -161,42 +168,52 @@ async def _score_user(
         content_samples=content_samples,
     )
 
+    client = OllamaClient()
     raw_response: str | None = None
+
     try:
-        client = OllamaClient()
         raw_response = await client.generate(
             prompt=prompt,
             system=_OCEAN_SYSTEM_PROMPT_IMPORT(),
             temperature=0.2,
             num_predict=_OCEAN_NUM_PREDICT,
         )
-        scores = parse_ocean_response(raw_response)
-        if scores:
-            scores["raw_llm_response"] = raw_response[:2000]
-            logger.info(
-                "[OCEAN] LLM scored %s: O=%.0f C=%.0f E=%.0f A=%.0f N=%.0f conf=%.0f",
-                user.username,
-                scores["openness"], scores["conscientiousness"],
-                scores["extraversion"], scores["agreeableness"],
-                scores["neuroticism"], scores["confidence"],
-            )
-            return scores
-        logger.warning("[OCEAN] LLM response unparseable for %s — using heuristic", user.username)
+    except ConnectionError as exc:
+        # Ollama service is not running — fall back to heuristic so pipeline
+        # continues when Ollama is temporarily unavailable.
+        logger.warning(
+            "[OCEAN] Ollama not reachable for @%s — using heuristic fallback. "
+            "Start Ollama with: ollama serve. Detail: %s",
+            user.username, exc,
+        )
+        fallback = compute_heuristic_scores(
+            empath_scores=nlp.empath_scores or {},
+            total_tokens=nlp.total_tokens,
+            vocabulary_richness=nlp.vocabulary_richness,
+            avg_sentence_length=nlp.avg_sentence_length,
+        )
+        fallback["scoring_method"] = "heuristic"
+        return fallback
+    # TimeoutError and RuntimeError (OOM, model not found, bad status) propagate
+    # as-is so the caller sees the real failure — no silent heuristic substitution.
 
-    except (ConnectionError, TimeoutError, RuntimeError) as exc:
-        logger.warning("[OCEAN] LLM failed for %s: %s — using heuristic", user.username, exc)
+    scores = parse_ocean_response(raw_response)
+    if scores:
+        scores["raw_llm_response"] = raw_response[:2000]
+        logger.info(
+            "[OCEAN] LLM scored @%s: O=%.0f C=%.0f E=%.0f A=%.0f N=%.0f conf=%.0f",
+            user.username,
+            scores["openness"], scores["conscientiousness"],
+            scores["extraversion"], scores["agreeableness"],
+            scores["neuroticism"], scores["confidence"],
+        )
+        return scores
 
-    # ── Heuristic fallback ────────────────────────────────────────────────────
-    fallback = compute_heuristic_scores(
-        empath_scores=nlp.empath_scores or {},
-        total_tokens=nlp.total_tokens,
-        vocabulary_richness=nlp.vocabulary_richness,
-        avg_sentence_length=nlp.avg_sentence_length,
+    raise RuntimeError(
+        f"Ollama returned an unparseable OCEAN response for @{user.username}. "
+        f"Model: {client.base_url}. "
+        f"Raw response (first 300 chars): {raw_response[:300]!r}"
     )
-    fallback["scoring_method"] = "heuristic"
-    if raw_response:
-        fallback["raw_llm_response"] = raw_response[:2000]
-    return fallback
 
 
 def _OCEAN_SYSTEM_PROMPT_IMPORT() -> str:
