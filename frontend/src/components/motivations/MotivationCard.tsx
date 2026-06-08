@@ -11,12 +11,14 @@ interface MotivationCardProps {
 
 export function MotivationCard({ category, index }: MotivationCardProps) {
   const op = category.ocean_profile;
+
+  // Pass emotional_stability directly as "stability" so OceanBars shows "S" label
   const oceanData = {
     openness: op.openness,
     conscientiousness: op.conscientiousness,
     extraversion: op.extraversion,
     agreeableness: op.agreeableness,
-    neuroticism: 100 - op.emotional_stability,
+    stability: op.emotional_stability,
   };
 
   return (
@@ -47,10 +49,17 @@ export function MotivationCard({ category, index }: MotivationCardProps) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <p className="text-xs font-semibold text-slate-400 uppercase mb-2">OCEAN Profile</p>
-          <OceanBars data={oceanData} />
+          <OceanBars data={oceanData} scale={10} />
         </div>
         <div>
-          <OceanRadar {...oceanData} height={160} />
+          <OceanRadar
+            openness={oceanData.openness}
+            conscientiousness={oceanData.conscientiousness}
+            extraversion={oceanData.extraversion}
+            agreeableness={oceanData.agreeableness}
+            stability={oceanData.stability}
+            height={160}
+          />
         </div>
       </div>
 

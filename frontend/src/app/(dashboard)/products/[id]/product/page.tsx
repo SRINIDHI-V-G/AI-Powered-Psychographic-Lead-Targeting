@@ -2,11 +2,13 @@
 
 import { Package, MapPin, Tag, DollarSign, Building2 } from 'lucide-react';
 import { useProduct } from '@/lib/hooks/useProducts';
+import { useCompany } from '@/lib/hooks/useCompany';
 import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import { ErrorState } from '@/components/shared/ErrorState';
 
 export default function ProductDetailPage({ params }: { params: { id: string } }) {
   const { data: product, isLoading, isError } = useProduct(params.id);
+  const { data: company } = useCompany();
 
   if (isLoading) return (
     <div className="flex items-center justify-center h-64">
@@ -17,7 +19,14 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
 
   const priceLabel: Record<string, string> = {
     budget: 'Budget', mid_range: 'Mid Range', premium: 'Premium', luxury: 'Luxury',
+    standard: 'Standard',
   };
+
+  const locationDisplay = [product.target_city, product.target_country]
+    .filter(Boolean)
+    .join(', ') || product.target_location || '—';
+
+  const companyMeta = [company?.industry, company?.email].filter(Boolean).join(' · ');
 
   return (
     <div className="max-w-2xl mx-auto space-y-5">
@@ -61,9 +70,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
             <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Target Location</span>
             <div className="flex items-center gap-1.5">
               <MapPin size={13} className="text-slate-400" />
-              <span className="text-sm font-medium text-slate-700">
-                {product.target_location ?? product.target_country ?? '—'}
-              </span>
+              <span className="text-sm font-medium text-slate-700">{locationDisplay}</span>
             </div>
           </div>
         </div>
@@ -90,8 +97,10 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
             <Building2 size={20} className="text-slate-500" />
           </div>
           <div>
-            <p className="font-semibold text-slate-800">Your Company</p>
-            <p className="text-xs text-slate-500 mt-0.5">Managing this targeting pipeline</p>
+            <p className="font-semibold text-slate-800">{company?.name ?? 'Your Company'}</p>
+            {companyMeta && (
+              <p className="text-xs text-slate-500 mt-0.5">{companyMeta}</p>
+            )}
           </div>
         </div>
       </div>

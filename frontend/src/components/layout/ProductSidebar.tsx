@@ -4,9 +4,9 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard,
-  Search,
-  Trophy,
-  Brain,
+  Package,
+  Target,
+  Users,
   BarChart2,
   CheckCircle2,
   Circle,
@@ -40,34 +40,39 @@ export function ProductSidebar({ productId }: ProductSidebarProps) {
   const running = ['processing', 'discovering', 'nlp_processing', 'ocean_scoring', 'matching', 'ranking'].includes(status?.status ?? '');
 
   const navItems = [
-    { href: base,                    label: 'Overview',       icon: LayoutDashboard },
-    { href: `${base}/discovery`,     label: 'Discovery',      icon: Search },
-    { href: `${base}/leads`,         label: 'Leads',          icon: Trophy },
-    { href: `${base}/ocean`,         label: 'OCEAN Profiles', icon: Brain },
-    { href: `${base}/analytics`,     label: 'Analytics',      icon: BarChart2 },
+    { href: base,                    label: 'Overview',        icon: LayoutDashboard },
+    { href: `${base}/product`,       label: 'Product',         icon: Package },
+    { href: `${base}/motivations`,   label: 'AI Motivations',  icon: Target },
+    { href: `${base}/discovery`,     label: 'Discovered Users', icon: Users },
+    { href: `${base}/leads`,         label: 'Lead Rankings',   icon: BarChart2 },
   ];
 
   return (
-    <aside className="w-56 bg-white border-r border-slate-200 flex flex-col shrink-0 overflow-y-auto">
-      <nav className="flex-1 px-3 py-4 space-y-1">
-        {navItems.map(({ href, label, icon: Icon }) => {
-          const active = pathname === href;
-          return (
-            <Link
-              key={href}
-              href={href}
-              className={cn(
-                'flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition',
-                active
-                  ? 'bg-indigo-50 text-indigo-700'
-                  : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
-              )}
-            >
-              <Icon size={16} />
-              {label}
-            </Link>
-          );
-        })}
+    <aside className="w-48 bg-white border-r border-slate-200 flex flex-col shrink-0 overflow-y-auto">
+      <nav className="flex-1 px-3 py-4">
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 px-2">
+          Navigation
+        </p>
+        <div className="space-y-0.5">
+          {navItems.map(({ href, label, icon: Icon }) => {
+            const active = pathname === href;
+            return (
+              <Link
+                key={href}
+                href={href}
+                className={cn(
+                  'flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition',
+                  active
+                    ? 'bg-indigo-50 text-indigo-700'
+                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                )}
+              >
+                <Icon size={15} />
+                {label}
+              </Link>
+            );
+          })}
+        </div>
       </nav>
 
       <div className="px-3 py-4 border-t border-slate-100">
@@ -81,11 +86,11 @@ export function ProductSidebar({ productId }: ProductSidebarProps) {
             return (
               <li key={stage} className="flex items-center gap-2">
                 {active ? (
-                  <Loader2 size={14} className="text-indigo-500 animate-spin shrink-0" />
+                  <Loader2 size={13} className="text-indigo-500 animate-spin shrink-0" />
                 ) : done ? (
-                  <CheckCircle2 size={14} className="text-green-500 shrink-0" />
+                  <CheckCircle2 size={13} className="text-green-500 shrink-0" />
                 ) : (
-                  <Circle size={14} className="text-slate-300 shrink-0" />
+                  <Circle size={13} className="text-slate-300 shrink-0" />
                 )}
                 <span
                   className={cn(

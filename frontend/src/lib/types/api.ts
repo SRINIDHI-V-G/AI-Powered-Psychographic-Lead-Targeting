@@ -237,6 +237,19 @@ export interface OceanStatus {
   ocean_scored: number;
   ocean_pending: number;
   progress_pct: number;
+  scoring_model: string;
+}
+
+export interface MatchStatus {
+  product_id: string;
+  total_users: number;
+  matched: number;
+  ranked: number;
+  hot: number;
+  warm: number;
+  cold: number;
+  pending: number;
+  progress_pct: number;
 }
 
 export interface OceanScore {
@@ -268,6 +281,7 @@ export interface Lead {
   user_id: string;
   username: string;
   display_name?: string;
+  bio?: string;
   platform: string;
   profile_url?: string;
   location?: string;
@@ -337,15 +351,6 @@ export interface LeadsSummary {
   avg_score: number;
   top_score: number;
   top_category: string;
-}
-
-export interface MatchStatus {
-  product_id: string;
-  total_users: number;
-  matched: number;
-  ranked: number;
-  pending: number;
-  progress_pct: number;
 }
 
 // ─── Analytics ───────────────────────────────────────────────────────────────

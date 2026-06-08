@@ -14,6 +14,7 @@ class OceanStatusResponse(BaseModel):
     ocean_scored: int
     ocean_pending: int
     progress_pct: float
+    scoring_model: str = "Ollama"
 
 
 class OceanReasoningResponse(BaseModel):

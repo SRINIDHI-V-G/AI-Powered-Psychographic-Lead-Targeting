@@ -9,6 +9,7 @@ import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import { ErrorState } from '@/components/shared/ErrorState';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 import { getPipelineLabel, formatNumber } from '@/lib/utils';
+import { getProviderColor } from '@/lib/providerColors';
 import Link from 'next/link';
 
 export default function DashboardPage() {
@@ -48,17 +49,11 @@ export default function DashboardPage() {
     },
   ].filter((d) => d.value > 0);
 
-  // Provider colours — keyed by provider_name from DiscoveryJob
-  const PROVIDER_COLORS: Record<string, string> = {
-    reddit:    '#ff4500',
-    instagram: '#e1306c',
-    youtube:   '#ff0000',
-    mock:      '#94a3b8',
-  };
+  // Dynamic provider colors — no hardcoded names
   const sourceData = (data.discovery_sources ?? []).map((s) => ({
     name: s.provider.charAt(0).toUpperCase() + s.provider.slice(1),
     value: s.users_discovered,
-    color: PROVIDER_COLORS[s.provider.toLowerCase()] ?? '#64748b',
+    color: getProviderColor(s.provider),
   }));
 
   // Aggregate motivation categories from recent activity

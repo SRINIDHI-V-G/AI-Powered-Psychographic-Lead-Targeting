@@ -14,7 +14,9 @@ interface OceanRadarProps {
   conscientiousness: number;
   extraversion: number;
   agreeableness: number;
-  neuroticism: number;
+  /** Pass either neuroticism OR stability (not both). Stability label shows "S". */
+  neuroticism?: number;
+  stability?: number;
   height?: number;
   color?: string;
 }
@@ -25,15 +27,19 @@ export function OceanRadar({
   extraversion,
   agreeableness,
   neuroticism,
+  stability,
   height = 200,
   color = '#6366f1',
 }: OceanRadarProps) {
+  const lastValue = stability ?? neuroticism ?? 0;
+  const lastLabel = stability !== undefined ? 'S' : 'N';
+
   const chartData = [
     { dimension: 'O', value: openness / 10 },
     { dimension: 'C', value: conscientiousness / 10 },
     { dimension: 'E', value: extraversion / 10 },
     { dimension: 'A', value: agreeableness / 10 },
-    { dimension: 'N', value: neuroticism / 10 },
+    { dimension: lastLabel, value: lastValue / 10 },
   ];
 
   return (

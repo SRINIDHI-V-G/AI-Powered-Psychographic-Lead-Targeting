@@ -13,6 +13,7 @@ from uuid import UUID
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.crud.ocean import get_ocean_status, get_user_ocean_score
 from app.crud.product import get_product_by_id
 from app.database import get_db
@@ -20,6 +21,18 @@ from app.dependencies import get_current_company
 from app.models.company import Company
 from app.schemas.ocean import OceanStatusResponse, UserOceanScoreResponse
 from app.services.ocean_service import start_ocean_background
+
+
+def _format_model_name(raw: str) -> str:
+    """Convert 'llama3.1:8b' → 'Llama 3.1 8B' for display."""
+    import re
+    parts = raw.split(":")
+    name = parts[0]
+    tag = parts[1] if len(parts) > 1 else ""
+    # Insert space before first digit run: 'llama3.1' → 'llama 3.1'
+    name = re.sub(r"([a-zA-Z])(\d)", r"\1 \2", name).strip()
+    tag_fmt = tag.upper() if tag else ""
+    return f"{name.title()} {tag_fmt}".strip()
 
 router = APIRouter(tags=["OCEAN Scoring"])
 
@@ -38,7 +51,8 @@ async def ocean_status(
     if not product:
         raise HTTPException(status_code=404, detail="Product not found.")
     counts = await get_ocean_status(db, product_id)
-    return OceanStatusResponse(product_id=product_id, **counts)
+    model_display = _format_model_name(settings.OLLAMA_MODEL) if not settings.USE_MOCK_LLM else "Mock LLM"
+    return OceanStatusResponse(product_id=product_id, scoring_model=model_display, **counts)
 
 
 @router.post(

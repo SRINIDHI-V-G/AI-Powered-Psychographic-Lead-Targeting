@@ -11,6 +11,10 @@ class MatchStatusResponse(BaseModel):
     total_users: int
     matched: int
     ranked: int
+    # Real tier counts derived from final_score thresholds
+    hot: int = 0   # final_score >= 75
+    warm: int = 0  # 55 <= final_score < 75
+    cold: int = 0  # final_score < 55
     pending: int
     progress_pct: float
 
@@ -20,6 +24,7 @@ class LeadSummary(BaseModel):
     user_id: str
     username: str
     display_name: str | None
+    bio: str | None = None
     platform: str
     profile_url: str | None
     location: str | None

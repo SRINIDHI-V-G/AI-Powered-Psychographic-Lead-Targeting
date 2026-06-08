@@ -13,7 +13,7 @@ from app.models.ocean import UserOceanScore
 
 
 async def get_match_status(db: AsyncSession, product_id: UUID) -> dict:
-    """Return matching progress counts for a product."""
+    """Return matching progress counts for a product including real tier breakdowns."""
     total_r = await db.execute(
         select(func.count())
         .select_from(DiscoveredUser)
@@ -34,20 +34,27 @@ async def get_match_status(db: AsyncSession, product_id: UUID) -> dict:
     )
     matched = matched_r.scalar_one()
 
-    ranked_r = await db.execute(
-        select(func.count())
-        .select_from(LeadMatch)
+    # Fetch all best-match scores for tier calculation
+    scores_r = await db.execute(
+        select(LeadMatch.final_score)
         .where(
             LeadMatch.product_id == product_id,
             LeadMatch.is_best_match == True,  # noqa: E712
         )
     )
-    ranked = ranked_r.scalar_one()
+    scores = [row[0] for row in scores_r]
+    ranked = len(scores)
+    hot = sum(1 for s in scores if s >= 75.0)
+    warm = sum(1 for s in scores if 55.0 <= s < 75.0)
+    cold = sum(1 for s in scores if s < 55.0)
 
     return {
         "total_users": total,
         "matched": matched,
         "ranked": ranked,
+        "hot": hot,
+        "warm": warm,
+        "cold": cold,
         "pending": total - matched,
         "progress_pct": round(matched / total * 100, 1) if total > 0 else 0.0,
     }
@@ -114,6 +121,7 @@ async def get_ranked_leads(
             "user_id": str(user.id),
             "username": user.username,
             "display_name": user.display_name,
+            "bio": user.bio,
             "platform": user.platform,
             "profile_url": user.profile_url,
             "location": user.location,

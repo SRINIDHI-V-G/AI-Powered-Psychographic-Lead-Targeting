@@ -9,15 +9,8 @@ import { EmptyState } from '@/components/shared/EmptyState';
 import { ErrorState } from '@/components/shared/ErrorState';
 import { LeadDetailModal } from '@/components/leads/LeadDetailModal';
 import { getInitials, getTier } from '@/lib/utils';
+import { getProviderColor } from '@/lib/providerColors';
 import type { Lead } from '@/lib/types/api';
-
-const PLATFORM_COLORS: Record<string, string> = {
-  reddit: 'bg-orange-100 text-orange-700',
-  instagram: 'bg-pink-100 text-pink-700',
-  youtube: 'bg-red-100 text-red-700',
-  twitter: 'bg-sky-100 text-sky-700',
-  mock: 'bg-slate-100 text-slate-600',
-};
 
 const AVATAR_COLORS = [
   'bg-indigo-500', 'bg-cyan-500', 'bg-amber-500',
@@ -36,13 +29,8 @@ const TIER_STYLE: Record<string, string> = {
   Cold: 'bg-blue-100 text-blue-700',
 };
 
-const OCEAN_DIMS = [
-  { key: 'openness' as keyof Lead, label: 'O', color: '#6366f1' },
-  { key: 'conscientiousness' as keyof Lead, label: 'C', color: '#0891b2' },
-  { key: 'extraversion' as keyof Lead, label: 'E', color: '#f59e0b' },
-  { key: 'agreeableness' as keyof Lead, label: 'A', color: '#10b981' },
-  { key: 'neuroticism' as keyof Lead, label: 'N', color: '#ef4444' },
-];
+const OCEAN_DIMS = ['O', 'C', 'E', 'A', 'S'] as const;
+const OCEAN_KEYS = ['openness', 'conscientiousness', 'extraversion', 'agreeableness', 'neuroticism'] as const;
 
 export default function DiscoveryPage({ params }: { params: { id: string } }) {
   const { id } = params;
@@ -57,7 +45,7 @@ export default function DiscoveryPage({ params }: { params: { id: string } }) {
     sort: 'top',
   });
 
-  // Provider counts from jobs
+  // Provider counts fully dynamic from discovery jobs
   const providerCounts: Record<string, number> = {};
   (jobs ?? []).forEach(j => {
     if (j.status === 'completed' && j.provider_name) {
@@ -72,7 +60,7 @@ export default function DiscoveryPage({ params }: { params: { id: string } }) {
 
   return (
     <div className="max-w-7xl mx-auto space-y-5">
-      {/* Header */}
+      {/* Header + provider filter pills */}
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">Discovered Users</h1>
@@ -81,7 +69,7 @@ export default function DiscoveryPage({ params }: { params: { id: string } }) {
             {data ? ` · Top ${Math.min(data.total_leads, page * 10)} shown` : ''}
           </p>
         </div>
-        {/* Platform pills */}
+        {/* Dynamic provider pills — no provider names hardcoded */}
         <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => setPlatformFilter('')}
@@ -91,19 +79,22 @@ export default function DiscoveryPage({ params }: { params: { id: string } }) {
           >
             All
           </button>
-          {Object.entries(providerCounts).map(([provider, count]) => (
-            <button
-              key={provider}
-              onClick={() => setPlatformFilter(provider === platformFilter ? '' : provider)}
-              className={`px-3 py-1.5 rounded-full text-xs font-semibold transition ${
-                platformFilter === provider
-                  ? 'bg-slate-800 text-white'
-                  : `${PLATFORM_COLORS[provider] ?? 'bg-slate-100 text-slate-600'} hover:opacity-80`
-              }`}
-            >
-              {provider.charAt(0).toUpperCase() + provider.slice(1)} {count}
-            </button>
-          ))}
+          {Object.entries(providerCounts).map(([provider, count]) => {
+            const active = platformFilter === provider;
+            const brandColor = getProviderColor(provider);
+            return (
+              <button
+                key={provider}
+                onClick={() => setPlatformFilter(active ? '' : provider)}
+                style={active ? { backgroundColor: brandColor, color: '#fff', borderColor: brandColor } : { borderColor: brandColor, color: brandColor }}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold transition border ${
+                  active ? '' : 'bg-white hover:opacity-80'
+                }`}
+              >
+                {provider.charAt(0).toUpperCase() + provider.slice(1)} {count}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -150,6 +141,7 @@ function LeadUserCard({ lead, onClick }: { lead: Lead; onClick: () => void }) {
   const color = avatarColor(lead.username);
   const tier = getTier(lead.final_score);
   const hasOcean = lead.openness !== undefined && lead.openness !== null;
+  const platformColor = getProviderColor(lead.platform);
 
   return (
     <button
@@ -157,7 +149,7 @@ function LeadUserCard({ lead, onClick }: { lead: Lead; onClick: () => void }) {
       className="w-full text-left bg-white rounded-2xl border border-slate-200 p-5 hover:border-indigo-300 hover:shadow-sm transition"
     >
       {/* Top row */}
-      <div className="flex items-start justify-between gap-3 mb-3">
+      <div className="flex items-start justify-between gap-3 mb-2">
         <div className="flex items-center gap-3">
           <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0 ${color}`}>
             {initials}
@@ -174,7 +166,10 @@ function LeadUserCard({ lead, onClick }: { lead: Lead; onClick: () => void }) {
             <div className="flex items-center gap-1.5 mt-0.5">
               <span className="text-xs text-slate-500">@{lead.username}</span>
               <span className="text-slate-300">·</span>
-              <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${PLATFORM_COLORS[lead.platform] ?? 'bg-slate-100 text-slate-600'}`}>
+              <span
+                className="px-1.5 py-0.5 rounded text-xs font-medium text-white"
+                style={{ backgroundColor: platformColor }}
+              >
                 {lead.platform}
               </span>
             </div>
@@ -189,30 +184,32 @@ function LeadUserCard({ lead, onClick }: { lead: Lead; onClick: () => void }) {
         </div>
       </div>
 
-      {/* Location + followers */}
-      {(lead.location || lead.follower_count !== undefined) && (
-        <div className="flex items-center gap-3 mb-3 text-xs text-slate-500">
-          {lead.follower_count !== undefined && (
-            <span>{(lead.follower_count / 1000).toFixed(1)}k followers</span>
-          )}
-          {lead.location && <span>{lead.location}</span>}
-        </div>
+      {/* Bio */}
+      {lead.bio && (
+        <p className="text-xs text-slate-500 mt-1 mb-2 line-clamp-2 leading-relaxed">{lead.bio}</p>
       )}
 
-      {/* OCEAN bars */}
+      {/* Followers */}
+      {lead.follower_count !== undefined && (
+        <p className="text-xs text-slate-400 mb-2">
+          {lead.follower_count >= 1000
+            ? `${(lead.follower_count / 1000).toFixed(1)}k followers`
+            : `${lead.follower_count} followers`}
+          {lead.location ? ` · ${lead.location}` : ''}
+        </p>
+      )}
+
+      {/* OCEAN bars (O/C/E/A/S) */}
       {hasOcean && (
-        <div className="space-y-1.5 mt-3 pt-3 border-t border-slate-100">
-          {OCEAN_DIMS.map(({ key, label, color: barColor }) => {
-            const val = (lead[key] as number | undefined) ?? 50;
+        <div className="space-y-1 mt-2 pt-2 border-t border-slate-100">
+          {OCEAN_DIMS.map((label, i) => {
+            const val = (lead[OCEAN_KEYS[i]] as number | undefined) ?? 50;
             const display = (val / 10).toFixed(1);
             return (
-              <div key={key} className="flex items-center gap-2">
+              <div key={label} className="flex items-center gap-2">
                 <span className="text-xs font-bold w-4 text-slate-500">{label}</span>
                 <div className="flex-1 bg-slate-100 rounded-full h-1.5 overflow-hidden">
-                  <div
-                    className="h-full rounded-full"
-                    style={{ width: `${val}%`, backgroundColor: barColor }}
-                  />
+                  <div className="h-full rounded-full bg-indigo-500" style={{ width: `${val}%` }} />
                 </div>
                 <span className="text-xs text-slate-500 w-6 text-right">{display}</span>
               </div>
@@ -222,9 +219,11 @@ function LeadUserCard({ lead, onClick }: { lead: Lead; onClick: () => void }) {
       )}
 
       {/* Motivation match */}
-      <div className="mt-3 pt-2.5 border-t border-slate-100">
-        <span className="text-xs text-indigo-600 font-medium">{lead.best_motivation_category}</span>
-      </div>
+      {lead.best_motivation_category && (
+        <div className="mt-2 pt-2 border-t border-slate-100">
+          <span className="text-xs text-indigo-600 font-medium">{lead.best_motivation_category}</span>
+        </div>
+      )}
     </button>
   );
 }

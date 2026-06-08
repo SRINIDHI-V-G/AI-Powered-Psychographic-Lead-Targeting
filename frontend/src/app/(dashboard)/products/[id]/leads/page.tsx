@@ -23,18 +23,19 @@ function avatarColor(s: string) {
 }
 
 const TIER_STYLE: Record<string, { badge: string; bar: string }> = {
-  Hot:  { badge: 'bg-red-100 text-red-700 border-red-200',   bar: '#dc2626' },
+  Hot:  { badge: 'bg-red-100 text-red-700 border-red-200',         bar: '#dc2626' },
   Warm: { badge: 'bg-orange-100 text-orange-700 border-orange-200', bar: '#ea580c' },
-  Cold: { badge: 'bg-blue-100 text-blue-700 border-blue-200', bar: '#3b82f6' },
+  Cold: { badge: 'bg-blue-100 text-blue-700 border-blue-200',       bar: '#3b82f6' },
 };
 
 const MOTIVATION_COLORS = [
-  'text-indigo-600', 'text-cyan-600', 'text-purple-600',
-  'text-emerald-600', 'text-pink-600',
+  'bg-indigo-50 text-indigo-700', 'bg-cyan-50 text-cyan-700',
+  'bg-purple-50 text-purple-700', 'bg-emerald-50 text-emerald-700',
+  'bg-pink-50 text-pink-700',
 ];
 
 const OCEAN_DIMS = ['openness', 'conscientiousness', 'extraversion', 'agreeableness', 'neuroticism'] as const;
-const OCEAN_COLORS = ['#6366f1', '#0891b2', '#f59e0b', '#10b981', '#ef4444'];
+const OCEAN_COLORS = ['#6366f1', '#6366f1', '#6366f1', '#6366f1', '#6366f1'];
 
 export default function LeadsPage({ params }: { params: { id: string } }) {
   const { id } = params;
@@ -49,9 +50,10 @@ export default function LeadsPage({ params }: { params: { id: string } }) {
     sort: 'top',
   });
 
-  const hot  = (data?.leads ?? []).filter(l => l.final_score >= 75).length;
-  const warm = (data?.leads ?? []).filter(l => l.final_score >= 55 && l.final_score < 75).length;
-  const cold = (data?.leads ?? []).filter(l => l.final_score < 55).length;
+  // Real tier counts from API (not from page slice)
+  const hotCount  = matchStatus?.hot  ?? 0;
+  const warmCount = matchStatus?.warm ?? 0;
+  const coldCount = matchStatus?.cold ?? 0;
 
   const displayed = search
     ? (data?.leads ?? []).filter(l => {
@@ -65,19 +67,20 @@ export default function LeadsPage({ params }: { params: { id: string } }) {
       })
     : (data?.leads ?? []);
 
-  const motivationColorMap: Record<string, string> = {};
+  // Assign stable colors to motivation categories
+  const motivColorMap: Record<string, string> = {};
   let colorIdx = 0;
   displayed.forEach(l => {
-    if (!motivationColorMap[l.best_motivation_category]) {
-      motivationColorMap[l.best_motivation_category] = MOTIVATION_COLORS[colorIdx++ % MOTIVATION_COLORS.length];
+    if (!motivColorMap[l.best_motivation_category]) {
+      motivColorMap[l.best_motivation_category] = MOTIVATION_COLORS[colorIdx++ % MOTIVATION_COLORS.length];
     }
   });
 
-  const handleExport = async (format: 'csv' | 'json') => {
+  const handleExport = async () => {
     try {
-      const url = `/api/v1/products/${id}/leads/export?format=${format}`;
-      await downloadWithAuth(url, `leads-${id}.${format}`);
-      toast.success(`Exported as ${format.toUpperCase()}`);
+      const url = `/api/v1/products/${id}/leads/export?format=csv`;
+      await downloadWithAuth(url, `leads-${id}.csv`);
+      toast.success('Exported as CSV');
     } catch { toast.error('Export failed'); }
   };
 
@@ -89,15 +92,13 @@ export default function LeadsPage({ params }: { params: { id: string } }) {
           <h1 className="text-2xl font-bold text-slate-800">Lead Rankings</h1>
           <p className="text-sm text-slate-500 mt-0.5">Ranked by psychographic compatibility score</p>
         </div>
-        <div className="flex items-center gap-3">
-          {/* Tier counts */}
-          <div className="flex items-center gap-2">
-            {hot > 0 && <span className="px-2.5 py-1 bg-red-50 text-red-700 text-xs font-semibold rounded-full border border-red-200">{hot} Hot</span>}
-            {warm > 0 && <span className="px-2.5 py-1 bg-orange-50 text-orange-700 text-xs font-semibold rounded-full border border-orange-200">{warm} Warm</span>}
-            {cold > 0 && <span className="px-2.5 py-1 bg-blue-50 text-blue-700 text-xs font-semibold rounded-full border border-blue-200">{cold} Cold</span>}
-          </div>
+        <div className="flex items-center gap-2">
+          {/* Real tier counts from API */}
+          {hotCount  > 0 && <span className="px-2.5 py-1 bg-red-50 text-red-700 text-xs font-semibold rounded-full border border-red-200">{hotCount} Hot</span>}
+          {warmCount > 0 && <span className="px-2.5 py-1 bg-orange-50 text-orange-700 text-xs font-semibold rounded-full border border-orange-200">{warmCount} Warm</span>}
+          {coldCount > 0 && <span className="px-2.5 py-1 bg-blue-50 text-blue-700 text-xs font-semibold rounded-full border border-blue-200">{coldCount} Cold</span>}
           <button
-            onClick={() => handleExport('csv')}
+            onClick={handleExport}
             className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 text-slate-600 text-xs font-medium rounded-lg hover:bg-slate-50 transition"
           >
             <Download size={12} /> CSV
@@ -141,7 +142,7 @@ export default function LeadsPage({ params }: { params: { id: string } }) {
                 const ts = TIER_STYLE[tier] ?? TIER_STYLE.Cold;
                 const color = avatarColor(lead.username);
                 const initials = getInitials(lead.display_name ?? lead.username);
-                const motivColor = motivationColorMap[lead.best_motivation_category] ?? 'text-indigo-600';
+                const motivColor = motivColorMap[lead.best_motivation_category] ?? MOTIVATION_COLORS[0];
                 const hasOcean = lead.openness !== undefined && lead.openness !== null;
 
                 return (
@@ -168,15 +169,15 @@ export default function LeadsPage({ params }: { params: { id: string } }) {
                             {lead.display_name ?? lead.username}
                           </div>
                           <div className="text-xs text-slate-500 mt-0.5">
-                            {lead.location ? `${lead.location}` : `@${lead.username}`}
+                            {lead.location ? `@${lead.username} · ${lead.location}` : `@${lead.username}`}
                           </div>
                         </div>
                       </div>
                     </td>
 
-                    {/* Best motivation */}
+                    {/* Best motivation — colored pill */}
                     <td className="py-3.5 px-4 hidden md:table-cell">
-                      <span className={`text-xs font-medium ${motivColor}`}>
+                      <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${motivColor}`}>
                         {lead.best_motivation_category}
                       </span>
                     </td>
@@ -184,11 +185,9 @@ export default function LeadsPage({ params }: { params: { id: string } }) {
                     {/* Score */}
                     <td className="py-3.5 px-4">
                       <div className="space-y-1">
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="font-bold" style={{ color: ts.bar }}>
-                            {lead.final_score.toFixed(0)}%
-                          </span>
-                        </div>
+                        <span className="font-bold text-sm" style={{ color: ts.bar }}>
+                          {lead.final_score.toFixed(0)}%
+                        </span>
                         <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden w-28">
                           <div
                             className="h-full rounded-full"
@@ -217,7 +216,7 @@ export default function LeadsPage({ params }: { params: { id: string } }) {
                                 key={dim}
                                 className="w-3 rounded-sm"
                                 style={{ height: h, backgroundColor: OCEAN_COLORS[i], opacity: 0.85 }}
-                                title={`${dim.charAt(0).toUpperCase()}: ${(val/10).toFixed(1)}`}
+                                title={`${dim.charAt(0).toUpperCase()}: ${(val / 10).toFixed(1)}`}
                               />
                             );
                           })}
