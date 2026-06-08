@@ -93,9 +93,14 @@ class UserContentResponse(BaseModel):
 
 # ── Provider health ───────────────────────────────────────────────────────────
 
-class ProviderHealthResponse(BaseModel):
-    ok: bool
-    provider: str
-    detail: str
+class ProviderInfo(BaseModel):
+    configured: bool
+    healthy: bool
+    detail: str = ""
+
+
+class AllProvidersStatusResponse(BaseModel):
+    youtube: ProviderInfo
+    instagram: ProviderInfo
+    reddit: ProviderInfo
     mock_mode: bool
-    credentials_configured: bool

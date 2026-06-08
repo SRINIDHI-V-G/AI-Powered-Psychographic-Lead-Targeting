@@ -192,12 +192,17 @@ export interface UserContent {
   collected_at: string;
 }
 
-export interface ProviderStatus {
-  ok: boolean;
-  provider: string;
+export interface ProviderInfo {
+  configured: boolean;
+  healthy: boolean;
   detail: string;
+}
+
+export interface ProviderStatus {
+  youtube: ProviderInfo;
+  instagram: ProviderInfo;
+  reddit: ProviderInfo;
   mock_mode: boolean;
-  credentials_configured: boolean;
 }
 
 // ─── NLP ─────────────────────────────────────────────────────────────────────

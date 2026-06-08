@@ -16,8 +16,8 @@ class Settings(BaseSettings):
     # ── CORS ──────────────────────────────────────────────────────────────────
     # Explicit allowlist of origins. Must be set before production deployment.
     # Development default permits localhost only.
-    # Production example:
-    #   CORS_ORIGINS=https://app.example.com,https://staging.example.com
+    # MUST be a JSON array in .env (pydantic-settings v2 requirement):
+    #   CORS_ORIGINS=["https://app.example.com","https://staging.example.com"]
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:3001"]
 
     # ── Ollama / LLM ──────────────────────────────────────────────────────────

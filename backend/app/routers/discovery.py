@@ -33,11 +33,12 @@ from app.database import get_db
 from app.dependencies import get_current_company
 from app.models.company import Company
 from app.schemas.discovery import (
+    AllProvidersStatusResponse,
     DiscoveredUserListResponse,
     DiscoveredUserResponse,
     DiscoveryJobResponse,
     DiscoveryStartRequest,
-    ProviderHealthResponse,
+    ProviderInfo,
     UserContentResponse,
 )
 from app.services.discovery_service import start_discovery_background
@@ -49,41 +50,70 @@ router = APIRouter(tags=["Discovery"])
 
 @router.get(
     "/discovery/provider/status",
-    response_model=ProviderHealthResponse,
-    summary="Check discovery provider health",
+    response_model=AllProvidersStatusResponse,
+    summary="Check all discovery providers health",
     description=(
-        "Returns provider readiness without requiring an API key. "
-        "Use this to verify Reddit credentials are configured before "
-        "running a discovery job."
+        "Returns the configuration and health status for every discovery provider "
+        "(YouTube, Instagram, Reddit) independently. A provider showing "
+        "configured=false is simply not set up — it does not block other providers. "
+        "Discovery runs with whichever provider is configured and healthy."
     ),
 )
-async def discovery_provider_status() -> ProviderHealthResponse:
-    mock_mode = settings.use_mock_discovery()
-    creds_ok = settings.reddit_credentials_configured()
-
-    if mock_mode:
-        from app.ml.discovery.mock_provider import MockDiscoveryProvider
-        provider = MockDiscoveryProvider(delay_ms=0)
-    else:
-        from app.ml.discovery.reddit_provider import RedditProvider
+async def discovery_provider_status() -> AllProvidersStatusResponse:
+    async def _check_youtube() -> ProviderInfo:
+        if not settings.youtube_credentials_configured():
+            return ProviderInfo(configured=False, healthy=False, detail="YOUTUBE_API_KEY not set")
         try:
-            provider = RedditProvider()
-        except RuntimeError as exc:
-            return ProviderHealthResponse(
-                ok=False,
-                provider="reddit",
-                detail=str(exc),
-                mock_mode=True,
-                credentials_configured=False,
-            )
+            from app.ml.discovery.youtube_provider import YouTubeProvider
+            result = await YouTubeProvider().health_check()
+            return ProviderInfo(configured=True, healthy=result["ok"], detail=result["detail"])
+        except Exception as exc:
+            return ProviderInfo(configured=True, healthy=False, detail=str(exc))
 
-    health = await provider.health_check()
-    return ProviderHealthResponse(
-        ok=health["ok"],
-        provider=health["provider"],
-        detail=health["detail"],
-        mock_mode=mock_mode,
-        credentials_configured=creds_ok,
+    async def _check_reddit() -> ProviderInfo:
+        if not settings.reddit_credentials_configured():
+            return ProviderInfo(configured=False, healthy=False, detail="REDDIT_CLIENT_ID/SECRET not set")
+        try:
+            from app.ml.discovery.reddit_provider import RedditProvider
+            result = await RedditProvider().health_check()
+            return ProviderInfo(configured=True, healthy=result["ok"], detail=result["detail"])
+        except Exception as exc:
+            return ProviderInfo(configured=True, healthy=False, detail=str(exc))
+
+    async def _check_instagram() -> ProviderInfo:
+        if not settings.instagram_credentials_configured():
+            return ProviderInfo(configured=False, healthy=False, detail="INSTAGRAM_USERNAME/PASSWORD not set")
+        try:
+            # InstagramProvider.__init__ calls _login_with_session_recovery(), which is
+            # a blocking synchronous login. Run both init and health-check in a thread
+            # so the event loop is never blocked. Cap at 20 s to keep the endpoint fast.
+            def _init_and_check() -> dict:
+                from app.ml.discovery.instagram_provider import InstagramProvider
+                provider = InstagramProvider()
+                return provider._health_check_sync()
+
+            result = await asyncio.wait_for(
+                asyncio.to_thread(_init_and_check),
+                timeout=20.0,
+            )
+            return ProviderInfo(configured=True, healthy=result["ok"], detail=result["detail"])
+        except asyncio.TimeoutError:
+            return ProviderInfo(configured=True, healthy=False, detail="Health check timed out (20s) — Instagram login may be slow or require challenge resolution")
+        except Exception as exc:
+            return ProviderInfo(configured=True, healthy=False, detail=str(exc))
+
+    import asyncio
+    youtube, reddit, instagram = await asyncio.gather(
+        _check_youtube(),
+        _check_reddit(),
+        _check_instagram(),
+    )
+
+    return AllProvidersStatusResponse(
+        youtube=youtube,
+        reddit=reddit,
+        instagram=instagram,
+        mock_mode=settings.use_mock_discovery(),
     )
 
 
