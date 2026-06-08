@@ -278,8 +278,17 @@ export interface Lead {
   ocean_score: number;
   embedding_score: number;
   interest_score: number;
+  product_ocean_score?: number;
   confidence: number;
   reasoning: string[];
+  discovery_source?: string;
+  // Individual OCEAN personality dimension scores (0-100)
+  openness?: number;
+  conscientiousness?: number;
+  extraversion?: number;
+  agreeableness?: number;
+  neuroticism?: number;
+  ocean_scoring_method?: string;
 }
 
 export interface LeadsResponse {

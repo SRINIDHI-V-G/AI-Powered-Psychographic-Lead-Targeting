@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.discovery import DiscoveredUser
 from app.models.matching import LeadMatch
 from app.models.motivation import MotivationCategory
+from app.models.ocean import UserOceanScore
 
 
 async def get_match_status(db: AsyncSession, product_id: UUID) -> dict:
@@ -93,11 +94,12 @@ async def get_ranked_leads(
         else LeadMatch.rank.desc().nullsfirst()
     )
 
-    # Fetch page of leads with user + motivation info
+    # Fetch page of leads with user + motivation + OCEAN score info
     result = await db.execute(
-        select(LeadMatch, DiscoveredUser, MotivationCategory)
+        select(LeadMatch, DiscoveredUser, MotivationCategory, UserOceanScore)
         .join(DiscoveredUser, LeadMatch.user_id == DiscoveredUser.id)
         .join(MotivationCategory, LeadMatch.motivation_category_id == MotivationCategory.id)
+        .outerjoin(UserOceanScore, UserOceanScore.user_id == DiscoveredUser.id)
         .where(*filters)
         .order_by(order_clause)
         .offset(offset)
@@ -106,7 +108,7 @@ async def get_ranked_leads(
     rows = result.all()
 
     leads = []
-    for lead_match, user, category in rows:
+    for lead_match, user, category, ocean in rows:
         leads.append({
             "rank": lead_match.rank,
             "user_id": str(user.id),
@@ -126,6 +128,13 @@ async def get_ranked_leads(
             "product_ocean_score": getattr(lead_match, "product_ocean_score", None),
             "confidence": lead_match.confidence,
             "reasoning": lead_match.reasoning,
+            # Individual OCEAN dimension scores (0-100)
+            "openness": ocean.openness if ocean else None,
+            "conscientiousness": ocean.conscientiousness if ocean else None,
+            "extraversion": ocean.extraversion if ocean else None,
+            "agreeableness": ocean.agreeableness if ocean else None,
+            "neuroticism": ocean.neuroticism if ocean else None,
+            "ocean_scoring_method": ocean.scoring_method if ocean else None,
         })
 
     return {

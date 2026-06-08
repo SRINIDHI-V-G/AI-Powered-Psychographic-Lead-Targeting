@@ -1,73 +1,110 @@
 'use client';
 
 import { useState } from 'react';
-import { Search } from 'lucide-react';
-import { useDiscoveredUsers } from '@/lib/hooks/useDiscovery';
-import { UserCard } from '@/components/users/UserCard';
-import { UserDetailModal } from '@/components/users/UserDetailModal';
+import { useLeads } from '@/lib/hooks/useLeads';
+import { useDiscoveryJobs } from '@/lib/hooks/useDiscovery';
 import { Pagination } from '@/components/shared/Pagination';
 import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { ErrorState } from '@/components/shared/ErrorState';
-import type { DiscoveredUser } from '@/lib/types/api';
+import { LeadDetailModal } from '@/components/leads/LeadDetailModal';
+import { getInitials, getTier } from '@/lib/utils';
+import type { Lead } from '@/lib/types/api';
+
+const PLATFORM_COLORS: Record<string, string> = {
+  reddit: 'bg-orange-100 text-orange-700',
+  instagram: 'bg-pink-100 text-pink-700',
+  youtube: 'bg-red-100 text-red-700',
+  twitter: 'bg-sky-100 text-sky-700',
+  mock: 'bg-slate-100 text-slate-600',
+};
+
+const AVATAR_COLORS = [
+  'bg-indigo-500', 'bg-cyan-500', 'bg-amber-500',
+  'bg-emerald-500', 'bg-pink-500', 'bg-purple-500',
+];
+
+function avatarColor(s: string) {
+  let h = 0;
+  for (const c of s) h = (h * 31 + c.charCodeAt(0)) & 0xffff;
+  return AVATAR_COLORS[h % AVATAR_COLORS.length];
+}
+
+const TIER_STYLE: Record<string, string> = {
+  Hot: 'bg-red-100 text-red-700',
+  Warm: 'bg-orange-100 text-orange-700',
+  Cold: 'bg-blue-100 text-blue-700',
+};
+
+const OCEAN_DIMS = [
+  { key: 'openness' as keyof Lead, label: 'O', color: '#6366f1' },
+  { key: 'conscientiousness' as keyof Lead, label: 'C', color: '#0891b2' },
+  { key: 'extraversion' as keyof Lead, label: 'E', color: '#f59e0b' },
+  { key: 'agreeableness' as keyof Lead, label: 'A', color: '#10b981' },
+  { key: 'neuroticism' as keyof Lead, label: 'N', color: '#ef4444' },
+];
 
 export default function DiscoveryPage({ params }: { params: { id: string } }) {
   const { id } = params;
   const [page, setPage] = useState(1);
   const [platformFilter, setPlatformFilter] = useState('');
-  const [search, setSearch] = useState('');
-  const [selectedUser, setSelectedUser] = useState<DiscoveredUser | null>(null);
+  const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
 
-  const { data, isLoading, isError, refetch } = useDiscoveredUsers(id, {
+  const { data: jobs } = useDiscoveryJobs(id);
+  const { data, isLoading, isError, refetch } = useLeads(id, {
     page,
-    limit: 24,
+    page_size: 10,
+    sort: 'top',
   });
 
-  const filtered = (data?.users ?? []).filter((u) => {
-    if (platformFilter && u.platform.toLowerCase() !== platformFilter) return false;
-    if (search) {
-      const q = search.toLowerCase();
-      return (
-        u.username.toLowerCase().includes(q) ||
-        (u.display_name ?? '').toLowerCase().includes(q) ||
-        (u.bio ?? '').toLowerCase().includes(q)
-      );
+  // Provider counts from jobs
+  const providerCounts: Record<string, number> = {};
+  (jobs ?? []).forEach(j => {
+    if (j.status === 'completed' && j.provider_name) {
+      providerCounts[j.provider_name] = (providerCounts[j.provider_name] ?? 0) + j.users_discovered;
     }
-    return true;
   });
+  const totalDiscovered = Object.values(providerCounts).reduce((a, b) => a + b, 0);
+
+  const filtered = platformFilter
+    ? (data?.leads ?? []).filter(l => l.platform.toLowerCase() === platformFilter)
+    : (data?.leads ?? []);
 
   return (
     <div className="max-w-7xl mx-auto space-y-5">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-800">Discovered Users</h1>
-        <p className="text-sm text-slate-500 mt-0.5">
-          {data ? `${data.total} users discovered` : 'Loading...'}
-        </p>
-      </div>
-
-      {/* Filters */}
-      <div className="flex flex-wrap gap-3">
-        <div className="relative">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Search users..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-48"
-          />
+      {/* Header */}
+      <div className="flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-800">Discovered Users</h1>
+          <p className="text-sm text-slate-500 mt-0.5">
+            {totalDiscovered} public profiles discovered
+            {data ? ` · Top ${Math.min(data.total_leads, page * 10)} shown` : ''}
+          </p>
         </div>
-        <select
-          value={platformFilter}
-          onChange={(e) => setPlatformFilter(e.target.value)}
-          className="px-3 py-1.5 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-        >
-          <option value="">All Platforms</option>
-          <option value="instagram">Instagram</option>
-          <option value="reddit">Reddit</option>
-          <option value="twitter">Twitter</option>
-          <option value="mock">Mock</option>
-        </select>
+        {/* Platform pills */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => setPlatformFilter('')}
+            className={`px-3 py-1.5 rounded-full text-xs font-semibold transition ${
+              !platformFilter ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            All
+          </button>
+          {Object.entries(providerCounts).map(([provider, count]) => (
+            <button
+              key={provider}
+              onClick={() => setPlatformFilter(provider === platformFilter ? '' : provider)}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold transition ${
+                platformFilter === provider
+                  ? 'bg-slate-800 text-white'
+                  : `${PLATFORM_COLORS[provider] ?? 'bg-slate-100 text-slate-600'} hover:opacity-80`
+              }`}
+            >
+              {provider.charAt(0).toUpperCase() + provider.slice(1)} {count}
+            </button>
+          ))}
+        </div>
       </div>
 
       {isLoading ? (
@@ -79,36 +116,115 @@ export default function DiscoveryPage({ params }: { params: { id: string } }) {
       ) : !filtered.length ? (
         <EmptyState
           title="No users found"
-          description="Discovery hasn't run yet or no users match the filter."
+          description="Discovery hasn't run yet or matching is pending."
         />
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {filtered.map((user) => (
-            <UserCard
-              key={user.id}
-              user={user}
-              selected={selectedUser?.id === user.id}
-              onClick={() => setSelectedUser(user)}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {filtered.map((lead) => (
+            <LeadUserCard
+              key={lead.user_id}
+              lead={lead}
+              onClick={() => setSelectedLead(lead)}
             />
           ))}
         </div>
       )}
 
-      {data && data.total > 24 && (
-        <Pagination
-          page={page}
-          totalPages={Math.ceil(data.total / 24)}
-          onPageChange={setPage}
-        />
+      {data && data.total_pages > 1 && (
+        <Pagination page={page} totalPages={data.total_pages} onPageChange={setPage} />
       )}
 
-      {selectedUser && (
-        <UserDetailModal
-          user={selectedUser}
+      {selectedLead && (
+        <LeadDetailModal
+          lead={selectedLead}
           productId={id}
-          onClose={() => setSelectedUser(null)}
+          onClose={() => setSelectedLead(null)}
         />
       )}
     </div>
+  );
+}
+
+function LeadUserCard({ lead, onClick }: { lead: Lead; onClick: () => void }) {
+  const initials = getInitials(lead.display_name ?? lead.username);
+  const color = avatarColor(lead.username);
+  const tier = getTier(lead.final_score);
+  const hasOcean = lead.openness !== undefined && lead.openness !== null;
+
+  return (
+    <button
+      onClick={onClick}
+      className="w-full text-left bg-white rounded-2xl border border-slate-200 p-5 hover:border-indigo-300 hover:shadow-sm transition"
+    >
+      {/* Top row */}
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="flex items-center gap-3">
+          <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0 ${color}`}>
+            {initials}
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-slate-800 text-sm">
+                {lead.display_name ?? lead.username}
+              </span>
+              <span className={`px-2 py-0.5 rounded text-xs font-bold ${TIER_STYLE[tier] ?? 'bg-slate-100 text-slate-600'}`}>
+                {tier.toUpperCase()}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <span className="text-xs text-slate-500">@{lead.username}</span>
+              <span className="text-slate-300">·</span>
+              <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${PLATFORM_COLORS[lead.platform] ?? 'bg-slate-100 text-slate-600'}`}>
+                {lead.platform}
+              </span>
+            </div>
+          </div>
+        </div>
+        <div className="text-right shrink-0">
+          <span className={`text-2xl font-bold ${
+            tier === 'Hot' ? 'text-red-600' : tier === 'Warm' ? 'text-orange-500' : 'text-blue-500'
+          }`}>
+            {lead.final_score.toFixed(0)}%
+          </span>
+        </div>
+      </div>
+
+      {/* Location + followers */}
+      {(lead.location || lead.follower_count !== undefined) && (
+        <div className="flex items-center gap-3 mb-3 text-xs text-slate-500">
+          {lead.follower_count !== undefined && (
+            <span>{(lead.follower_count / 1000).toFixed(1)}k followers</span>
+          )}
+          {lead.location && <span>{lead.location}</span>}
+        </div>
+      )}
+
+      {/* OCEAN bars */}
+      {hasOcean && (
+        <div className="space-y-1.5 mt-3 pt-3 border-t border-slate-100">
+          {OCEAN_DIMS.map(({ key, label, color: barColor }) => {
+            const val = (lead[key] as number | undefined) ?? 50;
+            const display = (val / 10).toFixed(1);
+            return (
+              <div key={key} className="flex items-center gap-2">
+                <span className="text-xs font-bold w-4 text-slate-500">{label}</span>
+                <div className="flex-1 bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                  <div
+                    className="h-full rounded-full"
+                    style={{ width: `${val}%`, backgroundColor: barColor }}
+                  />
+                </div>
+                <span className="text-xs text-slate-500 w-6 text-right">{display}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Motivation match */}
+      <div className="mt-3 pt-2.5 border-t border-slate-100">
+        <span className="text-xs text-indigo-600 font-medium">{lead.best_motivation_category}</span>
+      </div>
+    </button>
   );
 }

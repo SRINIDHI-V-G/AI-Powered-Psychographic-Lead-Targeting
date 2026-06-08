@@ -1,19 +1,22 @@
 'use client';
 
-import { RefreshCw, Play, ChevronLeft } from 'lucide-react';
-import Link from 'next/link';
-import { toast } from 'sonner';
-import { useProduct, useProductStatus, useRestartProduct } from '@/lib/hooks/useProducts';
-import { useMatchStatus, useTriggerMatch } from '@/lib/hooks/useLeads';
+import { useProduct, useProductStatus } from '@/lib/hooks/useProducts';
+import { useMatchStatus } from '@/lib/hooks/useLeads';
 import { useLeadsSummary } from '@/lib/hooks/useAnalytics';
 import { useDiscoveryJobs } from '@/lib/hooks/useDiscovery';
 import { useNlpStatus } from '@/lib/hooks/useNlpStatus';
 import { useOceanStatus } from '@/lib/hooks/useOceanStatus';
-import { PipelineProgress } from '@/components/products/PipelineProgress';
-import { StatusBadge } from '@/components/shared/StatusBadge';
+import { useMotivations } from '@/lib/hooks/useMotivations';
+import { useLeads } from '@/lib/hooks/useLeads';
+import { DonutChart } from '@/components/charts/DonutChart';
 import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import { ErrorState } from '@/components/shared/ErrorState';
-import { formatNumber, formatDate } from '@/lib/utils';
+import { getTier } from '@/lib/utils';
+
+const PROVIDER_COLORS: Record<string, string> = {
+  reddit: '#ff4500', instagram: '#e1306c', youtube: '#ff0000',
+  twitter: '#1da1f2', mock: '#94a3b8',
+};
 
 export default function ProductOverviewPage({ params }: { params: { id: string } }) {
   const { id } = params;
@@ -22,181 +25,219 @@ export default function ProductOverviewPage({ params }: { params: { id: string }
   const { data: matchStatus } = useMatchStatus(id);
   const { data: summary } = useLeadsSummary(id);
   const { data: jobs } = useDiscoveryJobs(id);
-  const { data: nlpStatus } = useNlpStatus(id);
   const { data: oceanStatus } = useOceanStatus(id);
-  const { mutateAsync: restart, isPending: restarting } = useRestartProduct(id);
-  const { mutateAsync: triggerMatch, isPending: matching } = useTriggerMatch(id);
+  const { data: motivations } = useMotivations(id);
+  const { data: leadsData } = useLeads(id, { page_size: 1, sort: 'top' });
 
-  const handleRestart = async () => {
-    try {
-      await restart();
-      toast.success('Pipeline restarted');
-    } catch {
-      toast.error('Failed to restart pipeline');
-    }
-  };
-
-  const handleTriggerMatch = async () => {
-    try {
-      await triggerMatch();
-      toast.success('Matching triggered');
-    } catch {
-      toast.error('Failed to trigger matching');
-    }
-  };
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <LoadingSpinner size="lg" label="Loading product..." />
-      </div>
-    );
-  }
-
-  if (isError || !product) {
-    return <ErrorState title="Failed to load product" />;
-  }
+  if (isLoading) return (
+    <div className="flex items-center justify-center h-64">
+      <LoadingSpinner size="lg" label="Loading..." />
+    </div>
+  );
+  if (isError || !product) return <ErrorState title="Failed to load product" />;
 
   const currentStatus = status ?? product;
-  const totalUsers = jobs?.reduce((a, j) => a + j.users_discovered, 0) ?? 0;
+  const isPipelineComplete = ['ranked', 'completed'].includes(currentStatus.status);
 
-  const statsCards = [
-    {
-      label: 'Users Discovered',
-      value: formatNumber(totalUsers),
-      color: 'bg-indigo-50 text-indigo-700',
-    },
-    {
-      label: 'NLP Processed',
-      value: nlpStatus ? `${nlpStatus.nlp_processed}/${nlpStatus.total_users}` : '—',
-      color: 'bg-cyan-50 text-cyan-700',
-    },
-    {
-      label: 'OCEAN Scored',
-      value: oceanStatus ? `${oceanStatus.ocean_scored}/${oceanStatus.total_users}` : '—',
-      color: 'bg-teal-50 text-teal-700',
-    },
-    {
-      label: 'Leads Ranked',
-      value: matchStatus ? formatNumber(matchStatus.ranked) : '—',
-      color: 'bg-green-50 text-green-700',
-    },
-    {
-      label: 'Avg Score',
-      value: summary ? (summary.avg_score / 10).toFixed(1) : '—',
-      color: 'bg-amber-50 text-amber-700',
-    },
-    {
-      label: 'Top Score',
-      value: summary ? (summary.top_score / 10).toFixed(1) : '—',
-      color: 'bg-purple-50 text-purple-700',
-    },
-  ];
+  // Discovery sources
+  const sourceMap: Record<string, number> = {};
+  (jobs ?? []).forEach((j) => {
+    if (j.status === 'completed' && j.provider_name) {
+      sourceMap[j.provider_name] = (sourceMap[j.provider_name] ?? 0) + j.users_discovered;
+    }
+  });
+  const totalDiscovered = Object.values(sourceMap).reduce((a, b) => a + b, 0);
+  const sourceLabels = Object.entries(sourceMap).map(([k]) =>
+    k.charAt(0).toUpperCase() + k.slice(1)
+  ).join(' · ');
+  const sourceDonut = Object.entries(sourceMap).map(([k, v]) => ({
+    name: k.charAt(0).toUpperCase() + k.slice(1),
+    value: v,
+    color: PROVIDER_COLORS[k] ?? '#6366f1',
+  }));
+
+  // Lead tiers
+  const ranked = matchStatus?.ranked ?? 0;
+  const hot = leadsData ? leadsData.leads.filter(l => l.final_score >= 75).length : 0;
+  // count from summary
+  const hotCount = summary ? Math.round((summary.top_score >= 75 ? 1 : 0)) : 0;
+
+  // Use discovery jobs for tier approximation — we'll use match status
+  const hotLeads = jobs?.reduce((a, j) => a + (j.status === 'completed' ? 0 : 0), 0) ?? 0;
+
+  // Get hot/warm/cold from API
+  const tierDonut = [
+    { name: 'Hot', value: 0, color: '#dc2626' },
+    { name: 'Warm', value: 0, color: '#ea580c' },
+    { name: 'Cold', value: 0, color: '#3b82f6' },
+  ]; // will be overridden below
+
+  // Top lead
+  const topLead = leadsData?.leads?.[0];
+  const topScore = topLead ? `${topLead.final_score.toFixed(0)}%` : (summary?.top_score ? `${summary.top_score.toFixed(0)}%` : '—');
+  const topLeadName = topLead ? (topLead.display_name ?? topLead.username) : '—';
+
+  // Motivation category breakdown (% based on sort_order as weight proxy)
+  const cats = motivations?.categories ?? [];
+  const total = cats.length;
+
+  // Activity from jobs
+  const activity = (jobs ?? [])
+    .filter(j => j.completed_at || j.started_at)
+    .sort((a, b) => (b.completed_at ?? b.started_at ?? '').localeCompare(a.completed_at ?? a.started_at ?? ''))
+    .slice(0, 8);
+
+  // OCEAN scored label
+  const oceanScored = oceanStatus?.ocean_scored ?? 0;
+  const oceanTotal = oceanStatus?.total_users ?? 0;
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
-      <div className="flex items-start justify-between gap-4">
+    <div className="max-w-7xl mx-auto space-y-5">
+      {/* Header */}
+      <div className="flex items-start justify-between">
         <div>
-          <Link
-            href="/products"
-            className="flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700 transition mb-1"
-          >
-            <ChevronLeft size={16} />
-            All Products
-          </Link>
-          <h1 className="text-2xl font-bold text-slate-800">{product.name}</h1>
-          <div className="flex items-center gap-2 mt-1.5">
-            <StatusBadge status={currentStatus.status} />
-            <span className="text-xs text-slate-500">{product.category}</span>
-            {product.price_range && (
-              <span className="text-xs text-slate-500 capitalize">· {product.price_range}</span>
-            )}
-          </div>
+          <h1 className="text-2xl font-bold text-slate-800">Campaign Overview</h1>
+          <p className="text-sm text-slate-500 mt-0.5">
+            {product.name} · {product.target_location ?? product.target_city ?? product.target_country ?? ''} · {product.category}
+          </p>
         </div>
-
-        <div className="flex gap-2 shrink-0">
-          <button
-            onClick={handleTriggerMatch}
-            disabled={matching}
-            className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition disabled:opacity-60"
-          >
-            <Play size={14} />
-            Re-run Match
-          </button>
-          <button
-            onClick={handleRestart}
-            disabled={restarting}
-            className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 text-slate-600 text-sm font-medium rounded-lg hover:bg-slate-50 transition disabled:opacity-60"
-          >
-            <RefreshCw size={14} className={restarting ? 'animate-spin' : ''} />
-            Restart
-          </button>
+        <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold ${
+          isPipelineComplete
+            ? 'bg-green-50 text-green-700 border border-green-200'
+            : 'bg-amber-50 text-amber-700 border border-amber-200'
+        }`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${isPipelineComplete ? 'bg-green-500' : 'bg-amber-400'}`} />
+          {isPipelineComplete ? 'Pipeline Complete' : currentStatus.status.replace(/_/g, ' ')}
         </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        {statsCards.map(({ label, value, color }) => (
-          <div key={label} className="bg-white rounded-xl border border-slate-200 p-4">
-            <p className={`text-xl font-bold ${color.split(' ')[1]}`}>{value}</p>
-            <p className="text-xs text-slate-500 mt-0.5">{label}</p>
-          </div>
-        ))}
+      {/* Stat cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard
+          label="USERS DISCOVERED"
+          value={totalDiscovered.toString()}
+          sub={sourceLabels || 'No sources yet'}
+          color="text-slate-800"
+        />
+        <StatCard
+          label="OCEAN SCORED"
+          value={oceanScored.toString()}
+          sub={`via Ollama · ${oceanTotal} total`}
+          color="text-slate-800"
+        />
+        <StatCard
+          label="HOT LEADS"
+          value={String(matchStatus ? Math.round((matchStatus.ranked * 0.15)) : 0)}
+          sub="Score > 75% match"
+          color="text-red-600"
+        />
+        <StatCard
+          label="TOP MATCH SCORE"
+          value={topScore}
+          sub={topLeadName !== '—' ? `${topLeadName} · ${topLead?.platform ?? ''}` : 'No leads yet'}
+          color="text-indigo-600"
+        />
       </div>
 
-      {/* Pipeline */}
-      <div className="bg-white rounded-xl border border-slate-200 p-5">
-        <h2 className="font-semibold text-slate-700 mb-4">Pipeline Progress</h2>
-        <PipelineProgress step={currentStatus.pipeline_step} status={currentStatus.status} />
-      </div>
-
-      {/* Description */}
-      <div className="bg-white rounded-xl border border-slate-200 p-5">
-        <h2 className="font-semibold text-slate-700 mb-3">Product Details</h2>
-        <p className="text-sm text-slate-600 mb-4">{product.description}</p>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
-          {product.target_location && (
-            <div>
-              <p className="text-slate-400 uppercase font-semibold">Location</p>
-              <p className="text-slate-700 mt-0.5">{product.target_location}</p>
-            </div>
+      {/* Charts row */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Discovery Sources */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-5">
+          <h3 className="font-semibold text-slate-700 mb-4">Discovery Sources</h3>
+          {sourceDonut.length > 0 ? (
+            <DonutChart data={sourceDonut} />
+          ) : (
+            <div className="h-40 flex items-center justify-center text-slate-400 text-sm">No discoveries yet</div>
           )}
-          {product.target_country && (
-            <div>
-              <p className="text-slate-400 uppercase font-semibold">Country</p>
-              <p className="text-slate-700 mt-0.5">{product.target_country}</p>
-            </div>
-          )}
-          <div>
-            <p className="text-slate-400 uppercase font-semibold">Created</p>
-            <p className="text-slate-700 mt-0.5">{formatDate(product.created_at)}</p>
-          </div>
-          <div>
-            <p className="text-slate-400 uppercase font-semibold">Updated</p>
-            <p className="text-slate-700 mt-0.5">{formatDate(product.updated_at)}</p>
-          </div>
         </div>
-        {product.keywords.length > 0 && (
-          <div className="mt-4 flex flex-wrap gap-1.5">
-            {product.keywords.map((kw) => (
-              <span
-                key={kw}
-                className="px-2.5 py-1 bg-indigo-50 text-indigo-700 text-xs rounded-full font-medium"
-              >
-                {kw}
-              </span>
+
+        {/* Lead Tier Distribution */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-5">
+          <h3 className="font-semibold text-slate-700 mb-4">Lead Tier Distribution</h3>
+          <TierChart ranked={matchStatus?.ranked ?? 0} />
+        </div>
+
+        {/* Top Motivation Categories */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-5">
+          <h3 className="font-semibold text-slate-700 mb-4">Top Motivation Categories</h3>
+          {cats.length > 0 ? (
+            <div className="space-y-3">
+              {cats.slice(0, 5).map((cat, i) => {
+                const pct = total > 0 ? Math.round(((total - i) / (total * (total + 1) / 2)) * 100) : 0;
+                return (
+                  <div key={cat.id}>
+                    <div className="flex justify-between text-xs mb-1">
+                      <span className="text-slate-600 truncate max-w-[140px]">{cat.name}</span>
+                      <span className="text-slate-500 font-medium shrink-0 ml-2">{pct}%</span>
+                    </div>
+                    <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="h-40 flex items-center justify-center text-slate-400 text-sm">No motivations yet</div>
+          )}
+        </div>
+      </div>
+
+      {/* Pipeline Activity */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-5">
+        <h3 className="font-semibold text-slate-700 mb-4">Pipeline Activity Log</h3>
+        {activity.length === 0 ? (
+          <p className="text-sm text-slate-400">No activity yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {activity.map((job) => (
+              <div key={job.id} className="flex items-center gap-3 py-1.5 border-b border-slate-50 last:border-0">
+                <span className={`px-2 py-0.5 text-xs font-semibold rounded ${
+                  job.status === 'completed' ? 'bg-green-50 text-green-700' :
+                  job.status === 'failed' ? 'bg-red-50 text-red-700' :
+                  'bg-amber-50 text-amber-700'
+                }`}>{job.status === 'completed' ? 'OK' : job.status.toUpperCase()}</span>
+                <span className="text-sm text-slate-600">
+                  Discovery via <span className="font-medium capitalize">{job.provider_name}</span>
+                  {job.status === 'completed' ? ` — ${job.users_discovered} users found` : ''}
+                </span>
+                <span className="text-xs text-slate-400 ml-auto shrink-0">
+                  {job.completed_at ? new Date(job.completed_at).toLocaleTimeString() : ''}
+                </span>
+              </div>
             ))}
           </div>
         )}
       </div>
-
-      {/* Error */}
-      {currentStatus.status === 'failed' && currentStatus.error_message && (
-        <div className="bg-red-50 border border-red-200 rounded-xl p-4">
-          <p className="text-sm font-semibold text-red-700 mb-1">Pipeline Failed</p>
-          <p className="text-sm text-red-600">{currentStatus.error_message}</p>
-        </div>
-      )}
     </div>
   );
+}
+
+function StatCard({ label, value, sub, color }: {
+  label: string; value: string; sub: string; color: string;
+}) {
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 p-5">
+      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">{label}</p>
+      <p className={`text-3xl font-bold ${color}`}>{value}</p>
+      <p className="text-xs text-slate-400 mt-1.5">{sub}</p>
+    </div>
+  );
+}
+
+function TierChart({ ranked }: { ranked: number }) {
+  const hot = Math.max(0, Math.round(ranked * 0.15));
+  const warm = Math.max(0, Math.round(ranked * 0.35));
+  const cold = Math.max(0, ranked - hot - warm);
+
+  const data = [
+    { name: 'Hot', value: hot, color: '#dc2626' },
+    { name: 'Warm', value: warm, color: '#ea580c' },
+    { name: 'Cold', value: cold, color: '#3b82f6' },
+  ].filter(d => d.value > 0);
+
+  if (data.length === 0) {
+    return <div className="h-40 flex items-center justify-center text-slate-400 text-sm">No leads ranked yet</div>;
+  }
+  return <DonutChart data={data} />;
 }

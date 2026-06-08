@@ -4,10 +4,10 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard,
+  Package,
   Brain,
-  Search,
+  Users,
   Trophy,
-  BarChart2,
   CheckCircle2,
   Circle,
   Loader2,
@@ -28,6 +28,7 @@ const pipelineStages = [
   'OCEAN Personality Scoring',
   'Matching Engine',
   'Lead Ranking',
+  'Pipeline Complete',
 ];
 
 export function ProductSidebar({ productId }: ProductSidebarProps) {
@@ -40,10 +41,10 @@ export function ProductSidebar({ productId }: ProductSidebarProps) {
 
   const navItems = [
     { href: base, label: 'Overview', icon: LayoutDashboard },
+    { href: `${base}/product`, label: 'Product', icon: Package },
     { href: `${base}/motivations`, label: 'AI Motivations', icon: Brain },
-    { href: `${base}/discovery`, label: 'Discovered Users', icon: Search },
+    { href: `${base}/discovery`, label: 'Discovered Users', icon: Users },
     { href: `${base}/leads`, label: 'Lead Rankings', icon: Trophy },
-    { href: `${base}/analytics`, label: 'Analytics', icon: BarChart2 },
   ];
 
   return (
