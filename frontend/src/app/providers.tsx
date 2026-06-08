@@ -6,6 +6,7 @@ import { Toaster } from 'sonner';
 import { useState, useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { checkAuthStatus, logoutSession } from '@/lib/auth';
+import { clearApiKey } from '@/lib/api/client';
 
 const PUBLIC_PATHS = ['/login'];
 
@@ -48,6 +49,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   // Listen for 401/403 responses from the backend (e.g., key rotated by admin).
   useEffect(() => {
     const handler = async () => {
+      clearApiKey();
       await logoutSession();
       router.replace('/login');
     };

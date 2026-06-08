@@ -9,6 +9,7 @@ import {
   setDemoMode,
 } from '../auth';
 import { setupDemo } from '../api/demo';
+import { storeApiKey, clearApiKey } from '../api/client';
 
 export function useAuth() {
   const router = useRouter();
@@ -33,6 +34,7 @@ export function useAuth() {
       try {
         const result = await loginWithKey(key.trim());
         if (result.ok) {
+          storeApiKey(key.trim());   // store for axios header injection
           setAuthenticated(true);
           router.push('/');
           return true;
@@ -60,7 +62,8 @@ export function useAuth() {
         return false;
       }
 
-      // 3. Store the demo product ID in sessionStorage (not a secret).
+      // 3. Store key for axios + demo product ID
+      storeApiKey(result.api_key);
       setDemoMode(result.product_id);
       setAuthenticated(true);
       router.push('/');
@@ -74,6 +77,7 @@ export function useAuth() {
   }, [router]);
 
   const logout = useCallback(async () => {
+    clearApiKey();
     await logoutSession();
     setAuthenticated(false);
     router.push('/login');

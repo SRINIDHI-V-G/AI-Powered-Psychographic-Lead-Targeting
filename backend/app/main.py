@@ -83,6 +83,13 @@ app = FastAPI(
     description="AI-powered psychographic lead targeting and ranking.",
     version="1.0.0",
     lifespan=lifespan,
+    # Disable automatic trailing-slash redirects.
+    # With redirect_slashes=True (default), a request to /api/v1/products would
+    # get a 307 redirect to http://localhost:8000/api/v1/products/ — an absolute
+    # backend URL. Axios follows that redirect directly to the backend, bypassing
+    # the Next.js middleware that injects X-API-Key, resulting in a 401 that logs
+    # the user out. Setting False makes both /products and /products/ work directly.
+    redirect_slashes=False,
 )
 
 # ── Middleware (order matters: outermost = first to receive request) ───────────
