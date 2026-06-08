@@ -212,7 +212,9 @@ async def run_matching_for_product(db: AsyncSession, product_id: UUID) -> dict:
     _log = f"[MATCH product={str(product_id)[:8]}]"
     logger.info("%s START", _log)
 
-    # ── 1. Load motivation categories (active only, with OCEAN profiles) ──────
+    # ── 1. Load motivation categories + OCEAN profiles with explicit JOIN ────
+    # Bypass ORM relationship lazy-loading entirely — use two separate awaited
+    # queries so no implicit sync I/O can fire inside an asyncio background task.
     cat_r = await db.execute(
         select(MotivationCategory)
         .where(
@@ -223,20 +225,20 @@ async def run_matching_for_product(db: AsyncSession, product_id: UUID) -> dict:
     )
     categories = list(cat_r.scalars().all())
 
-    # Eagerly load OCEAN profiles (already loaded via relationship in most cases,
-    # but execute explicit sub-query to be safe with async lazy loading)
-    for cat in categories:
-        if not cat.ocean_profile:
-            prof_r = await db.execute(
-                select(MotivationOceanProfile).where(
-                    MotivationOceanProfile.motivation_category_id == cat.id
-                )
-            )
-            cat.ocean_profile = prof_r.scalar_one_or_none()
-
     if not categories:
         logger.warning("%s no active motivation categories found — aborting", _log)
         return {"total": 0, "processed": 0, "failed": 0}
+
+    # Explicitly load each category's OCEAN profile via a separate awaited query.
+    # This avoids the MissingGreenlet error caused by accessing a lazy-loaded
+    # relationship attribute inside an asyncio create_task background context.
+    for cat in categories:
+        prof_r = await db.execute(
+            select(MotivationOceanProfile).where(
+                MotivationOceanProfile.motivation_category_id == cat.id
+            )
+        )
+        cat.ocean_profile = prof_r.scalar_one_or_none()
 
     # ── 1b. Load product-level OCEAN profile (supplementary signal) ───────────
     product_ocean_profile = await get_product_ocean(db, product_id)

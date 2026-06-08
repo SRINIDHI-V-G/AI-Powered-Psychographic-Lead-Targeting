@@ -31,13 +31,46 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
 
+def _check_pgvector_available() -> bool:
+    """
+    Returns True only when BOTH the Python package AND the PostgreSQL extension
+    are available. The package alone is not sufficient — migration 005 must have
+    run successfully so the DB column is actually VECTOR(384), not JSONB.
+    If the extension is missing the DB column is JSONB and pgvector's deserializer
+    would crash with "'list' object has no attribute 'split'".
+    """
+    try:
+        from pgvector.sqlalchemy import Vector  # noqa: F401 — just checking import
+    except ImportError:
+        return False
+    # Check the DB extension at import time via a synchronous psycopg2 call.
+    # This avoids the async-at-module-load-time problem. Falls back to False
+    # on any error so the app boots safely even without pgvector.
+    try:
+        import os
+        from sqlalchemy import create_engine, text as sa_text
+        db_url = os.environ.get("DATABASE_URL", "")
+        # Convert async URL to sync for this one-time check
+        sync_url = db_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
+        if not sync_url or "postgresql" not in sync_url:
+            return False
+        engine = create_engine(sync_url, pool_size=1, max_overflow=0)
+        with engine.connect() as conn:
+            r = conn.execute(sa_text("SELECT 1 FROM pg_extension WHERE extname='vector'"))
+            has_ext = r.fetchone() is not None
+        engine.dispose()
+        return has_ext
+    except Exception:
+        return False
+
+
 try:
     from pgvector.sqlalchemy import Vector as _Vector
-    _VECTOR_TYPE = _Vector(384)
-    _HAS_PGVECTOR = True
+    _HAS_PGVECTOR = _check_pgvector_available()
+    _VECTOR_TYPE = _Vector(384) if _HAS_PGVECTOR else JSONB
 except ImportError:
     _Vector = None
-    _VECTOR_TYPE = JSONB          # fallback — won't be used as a real vector column
+    _VECTOR_TYPE = JSONB
     _HAS_PGVECTOR = False
 
 

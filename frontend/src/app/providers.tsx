@@ -23,6 +23,12 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [checked, setChecked] = useState(false);
 
+  // Auth check runs ONCE on mount only.
+  // Re-running on every pathname change caused spurious /login redirects:
+  // navigating to /products triggered a fresh checkAuthStatus() which could
+  // transiently fail (network hiccup, HMR reload) and bounce the user back.
+  // Mid-session 401/403 responses are already handled by the auth:unauthorized
+  // event listener below (fired by the axios interceptor in lib/api/client.ts).
   useEffect(() => {
     if (PUBLIC_PATHS.includes(pathname)) {
       setChecked(true);
@@ -36,7 +42,8 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
         setChecked(true);
       }
     });
-  }, [pathname, router]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally empty — only check on initial mount
 
   // Listen for 401/403 responses from the backend (e.g., key rotated by admin).
   useEffect(() => {
