@@ -1,29 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 /**
- * Security middleware: read the HttpOnly session cookie and inject the
- * X-API-Key header into every /api/v1/* request before Next.js rewrites it
+ * Injects X-API-Key into every /api/v1/* request before Next.js rewrites it
  * to the FastAPI backend.
  *
- * The cookie is set server-side by /api/auth/login (HttpOnly, Secure, SameSite=Strict)
- * so it is never accessible to JavaScript — this prevents XSS-based key theft.
- *
- * The middleware must run BEFORE Next.js rewrites so the injected header is
- * forwarded to the backend. This is the default execution order in Next.js 13+.
+ * Source priority:
+ *   1. pl_session HttpOnly cookie (set after login)
+ *   2. DEV_API_KEY environment variable (local dev bypass — no login needed)
  */
 export function middleware(request: NextRequest): NextResponse {
   const { pathname } = request.nextUrl;
 
   if (pathname.startsWith('/api/v1/')) {
     const session = request.cookies.get('pl_session');
+    const apiKey = session?.value ?? process.env.DEV_API_KEY;
 
-    if (session?.value) {
+    if (apiKey) {
       const modifiedHeaders = new Headers(request.headers);
-      modifiedHeaders.set('X-API-Key', session.value);
-
-      return NextResponse.next({
-        request: { headers: modifiedHeaders },
-      });
+      modifiedHeaders.set('X-API-Key', apiKey);
+      return NextResponse.next({ request: { headers: modifiedHeaders } });
     }
   }
 
@@ -31,6 +26,5 @@ export function middleware(request: NextRequest): NextResponse {
 }
 
 export const config = {
-  // Run on all /api/v1/* requests; skip Next.js internals and static assets.
   matcher: ['/api/v1/:path*'],
 };

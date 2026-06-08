@@ -24,13 +24,14 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [checked, setChecked] = useState(false);
 
-  // Auth check runs ONCE on mount only.
-  // Re-running on every pathname change caused spurious /login redirects:
-  // navigating to /products triggered a fresh checkAuthStatus() which could
-  // transiently fail (network hiccup, HMR reload) and bounce the user back.
-  // Mid-session 401/403 responses are already handled by the auth:unauthorized
-  // event listener below (fired by the axios interceptor in lib/api/client.ts).
   useEffect(() => {
+    // Local dev bypass: skip login entirely when NEXT_PUBLIC_SKIP_AUTH=true.
+    // The middleware auto-injects DEV_API_KEY for all /api/v1/* requests.
+    if (process.env.NEXT_PUBLIC_SKIP_AUTH === 'true') {
+      setChecked(true);
+      return;
+    }
+
     if (PUBLIC_PATHS.includes(pathname)) {
       setChecked(true);
       return;
@@ -40,8 +41,6 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
       if (!ok) {
         router.replace('/login');
       } else {
-        // Restore the API key to sessionStorage if it was cleared (e.g. browser restart).
-        // The HttpOnly cookie survives restarts; sessionStorage does not.
         if (typeof window !== 'undefined' && !sessionStorage.getItem('pl_api_key')) {
           try {
             const res = await fetch('/api/auth/key');
@@ -50,18 +49,19 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
               storeApiKey(api_key);
             }
           } catch {
-            // Non-fatal: if this fails, API calls will 401 and the global
-            // auth:unauthorized handler will redirect to login.
+            // Non-fatal
           }
         }
         setChecked(true);
       }
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // intentionally empty — only check on initial mount
+  }, []);
 
-  // Listen for 401/403 responses from the backend (e.g., key rotated by admin).
+  // Listen for 401/403 responses from the backend.
+  // In bypass mode this is a no-op — the middleware always injects the dev key.
   useEffect(() => {
+    if (process.env.NEXT_PUBLIC_SKIP_AUTH === 'true') return;
     const handler = async () => {
       clearApiKey();
       await logoutSession();
