@@ -195,6 +195,7 @@ def provider(mock_client):
         mock_settings.instagram_credentials_configured.return_value = True
         mock_settings.INSTAGRAM_USERNAME = "test_account"
         mock_settings.INSTAGRAM_PASSWORD = "test_pass"
+        mock_settings.INSTAGRAM_SESSION_ID = ""
         mock_settings.INSTAGRAM_SESSION_FILE = "/tmp/test_ig_session.json"
         mock_settings.INSTAGRAM_MAX_POSTS_PER_HASHTAG = 5
         mock_settings.INSTAGRAM_MAX_COMMENTS_PER_POST = 10
@@ -296,6 +297,7 @@ class TestInstagramProviderInit:
             s.instagram_credentials_configured.return_value = True
             s.INSTAGRAM_USERNAME = "test_account"
             s.INSTAGRAM_PASSWORD = "test_pass"
+            s.INSTAGRAM_SESSION_ID = ""
             s.INSTAGRAM_SESSION_FILE = "/tmp/test.json"
             s.INSTAGRAM_MAX_POSTS_PER_HASHTAG = 5
             s.INSTAGRAM_MAX_COMMENTS_PER_POST = 10
@@ -310,6 +312,7 @@ class TestInstagramProviderInit:
             s.instagram_credentials_configured.return_value = True
             s.INSTAGRAM_USERNAME = "test_account"
             s.INSTAGRAM_PASSWORD = "test_pass"
+            s.INSTAGRAM_SESSION_ID = ""
             s.INSTAGRAM_SESSION_FILE = "/tmp/test.json"
             s.INSTAGRAM_MAX_POSTS_PER_HASHTAG = 5
             s.INSTAGRAM_MAX_COMMENTS_PER_POST = 10
@@ -432,15 +435,22 @@ class TestDiscoverUsers:
     """
     All mock PKs use numeric strings (e.g. "1001") so that int(user_pk) works
     in the provider's user_info call.
+
+    Strategy mapping:
+      Strategy 1 — search_users(keyword)  → discovery_method = "search"
+      Strategy 2 — seed account comments  → discovery_method = "commenter"
+      Both strategies match same user     → discovery_method = "both"
+      Strategy 3 — expansion              → post_captions + commenter users
     """
 
     @pytest.mark.asyncio
     async def test_returns_raw_discovered_users(self, provider, mock_client):
         from app.ml.discovery.base import RawDiscoveredUser
 
-        media1 = _media("10001", "1001", "priya_designs")
+        search_result = _user_short("1001", "priya_designs", "Priya Designs")
         profile1 = _user_info("1001", "priya_designs", bio="Interior designer in Chennai")
-        mock_client.hashtag_medias_recent_v1.return_value = [media1]
+        mock_client.search_users_v1.return_value = [search_result]
+        mock_client.user_medias.return_value = []
         mock_client.media_comments.return_value = []
         mock_client.user_info.return_value = profile1
 
@@ -448,10 +458,11 @@ class TestDiscoverUsers:
             s.INSTAGRAM_MAX_POSTS_PER_HASHTAG = 5
             s.INSTAGRAM_MAX_COMMENTS_PER_POST = 10
             with patch("time.sleep"):
-                result = await provider.discover_users(
-                    keywords=["luxury sofa"], target_city="Chennai",
-                    max_users=10, search_config={},
-                )
+                with patch.dict("os.environ", {"INSTAGRAM_SEED_ACCOUNTS": ""}):
+                    result = await provider.discover_users(
+                        keywords=["luxury sofa"], target_city="Chennai",
+                        max_users=10, search_config={},
+                    )
 
         assert len(result) >= 1
         assert isinstance(result[0], RawDiscoveredUser)
@@ -459,10 +470,11 @@ class TestDiscoverUsers:
         assert result[0].source_provider == "instagram"
 
     @pytest.mark.asyncio
-    async def test_poster_discovery_method(self, provider, mock_client):
-        media1 = _media("10001", "1001", "priya_designs")
+    async def test_search_discovery_method(self, provider, mock_client):
+        search_result = _user_short("1001", "priya_designs")
         profile1 = _user_info("1001", "priya_designs")
-        mock_client.hashtag_medias_recent_v1.return_value = [media1]
+        mock_client.search_users_v1.return_value = [search_result]
+        mock_client.user_medias.return_value = []
         mock_client.media_comments.return_value = []
         mock_client.user_info.return_value = profile1
 
@@ -470,71 +482,78 @@ class TestDiscoverUsers:
             s.INSTAGRAM_MAX_POSTS_PER_HASHTAG = 5
             s.INSTAGRAM_MAX_COMMENTS_PER_POST = 10
             with patch("time.sleep"):
-                result = await provider.discover_users(
-                    keywords=["sofa"], target_city=None, max_users=5, search_config={}
-                )
+                with patch.dict("os.environ", {"INSTAGRAM_SEED_ACCOUNTS": ""}):
+                    result = await provider.discover_users(
+                        keywords=["sofa"], target_city=None, max_users=5, search_config={}
+                    )
 
         user = next(u for u in result if u.username == "priya_designs")
-        assert user.raw_profile["discovery_method"] == "poster"
+        assert user.raw_profile["discovery_method"] == "search"
 
     @pytest.mark.asyncio
     async def test_commenter_discovery_method(self, provider, mock_client):
-        media1 = _media("10001", "1001", "poster_user")
+        seed_info = _user_info("9999", "furniture_brand")
+        media1 = _media("10001", "9999", "furniture_brand")
         comment1 = _comment("20001", "1002", "commenter_user")
-        poster_profile = _user_info("1001", "poster_user")
         commenter_profile = _user_info("1002", "commenter_user", bio="Chennai design lover")
 
-        mock_client.hashtag_medias_recent_v1.return_value = [media1]
+        mock_client.search_users_v1.return_value = []
+        mock_client.user_info_by_username.return_value = seed_info
+        mock_client.user_medias.return_value = [media1]
         mock_client.media_comments.return_value = [comment1]
-        mock_client.user_info.side_effect = lambda pk: (
-            poster_profile if str(pk) == "1001" else commenter_profile
-        )
+        mock_client.user_info.return_value = commenter_profile
 
         with patch("app.ml.discovery.instagram_provider.settings") as s:
             s.INSTAGRAM_MAX_POSTS_PER_HASHTAG = 5
             s.INSTAGRAM_MAX_COMMENTS_PER_POST = 10
             with patch("time.sleep"):
-                result = await provider.discover_users(
-                    keywords=["sofa"], target_city="Chennai", max_users=10, search_config={}
-                )
+                with patch.dict("os.environ", {"INSTAGRAM_SEED_ACCOUNTS": ""}):
+                    result = await provider.discover_users(
+                        keywords=["sofa"], target_city="Chennai", max_users=10,
+                        search_config={"seed_accounts": ["furniture_brand"]},
+                    )
 
-        commenter = next(u for u in result if u.username == "commenter_user")
+        assert len(result) >= 1
+        commenter = next((u for u in result if u.username == "commenter_user"), None)
+        assert commenter is not None
         assert commenter.raw_profile["discovery_method"] == "commenter"
 
     @pytest.mark.asyncio
-    async def test_poster_commenter_merge(self, provider, mock_client):
-        """User who appears as poster AND commenter gets discovery_method='both'."""
-        # dual_user (1001) is a poster on media1 and a commenter on media2
-        media1 = _media("10001", "1001", "dual_user", caption="My sofa haul!")
-        media2 = _media("10002", "1002", "other_poster", caption="Premium furniture")
-        comment_on_m2 = _comment("20001", "1001", "dual_user", "I bought this too!")
+    async def test_search_commenter_merge(self, provider, mock_client):
+        """User found via search AND as commenter on seed account → discovery_method='both'."""
+        search_result = _user_short("1001", "dual_user")
+        seed_info = _user_info("9999", "furniture_brand")
+        media1 = _media("10001", "9999", "furniture_brand")
+        comment_on_seed = _comment("20001", "1001", "dual_user", "I love this furniture!")
         dual_profile = _user_info("1001", "dual_user")
-        other_profile = _user_info("1002", "other_poster")
 
-        mock_client.hashtag_medias_recent_v1.return_value = [media1, media2]
-        mock_client.media_comments.side_effect = lambda pk, amount: (
-            [comment_on_m2] if str(pk) == "10002" else []
-        )
-        mock_client.user_info.side_effect = lambda pk: (
-            dual_profile if str(pk) == "1001" else other_profile
-        )
+        mock_client.search_users_v1.return_value = [search_result]
+        mock_client.user_info_by_username.return_value = seed_info
+        # user_medias for seed account (strategy 2) returns media1;
+        # user_medias for dual_user (strategy 3) returns [] since method becomes "both"
+        mock_client.user_medias.return_value = [media1]
+        mock_client.media_comments.return_value = [comment_on_seed]
+        mock_client.user_info.return_value = dual_profile
 
         with patch("app.ml.discovery.instagram_provider.settings") as s:
             s.INSTAGRAM_MAX_POSTS_PER_HASHTAG = 5
             s.INSTAGRAM_MAX_COMMENTS_PER_POST = 10
             with patch("time.sleep"):
-                result = await provider.discover_users(
-                    keywords=["sofa"], target_city=None, max_users=10, search_config={}
-                )
+                with patch.dict("os.environ", {"INSTAGRAM_SEED_ACCOUNTS": ""}):
+                    result = await provider.discover_users(
+                        keywords=["sofa"], target_city=None, max_users=10,
+                        search_config={"seed_accounts": ["furniture_brand"]},
+                    )
 
         dual = next(u for u in result if u.username == "dual_user")
         assert dual.raw_profile["discovery_method"] == "both"
 
     @pytest.mark.asyncio
     async def test_private_profiles_skipped(self, provider, mock_client):
-        media1 = _media("10001", "1001", "private_user")
+        search_result = _user_short("1001", "private_user")
         private_profile = _user_info("1001", "private_user", is_private=True)
-        mock_client.hashtag_medias_recent_v1.return_value = [media1]
+        mock_client.search_users_v1.return_value = [search_result]
+        mock_client.user_medias.return_value = []
         mock_client.media_comments.return_value = []
         mock_client.user_info.return_value = private_profile
 
@@ -542,31 +561,33 @@ class TestDiscoverUsers:
             s.INSTAGRAM_MAX_POSTS_PER_HASHTAG = 5
             s.INSTAGRAM_MAX_COMMENTS_PER_POST = 10
             with patch("time.sleep"):
-                result = await provider.discover_users(
-                    keywords=["sofa"], target_city=None, max_users=10, search_config={}
-                )
+                with patch.dict("os.environ", {"INSTAGRAM_SEED_ACCOUNTS": ""}):
+                    result = await provider.discover_users(
+                        keywords=["sofa"], target_city=None, max_users=10, search_config={}
+                    )
 
         assert not any(u.username == "private_user" for u in result)
 
     @pytest.mark.asyncio
-    async def test_failed_hashtag_skipped_gracefully(self, provider, mock_client):
-        mock_client.hashtag_medias_recent_v1.side_effect = Exception("rate limit")
+    async def test_failed_search_skipped_gracefully(self, provider, mock_client):
+        mock_client.search_users_v1.side_effect = Exception("rate limit")
 
         with patch("app.ml.discovery.instagram_provider.settings") as s:
             s.INSTAGRAM_MAX_POSTS_PER_HASHTAG = 5
             s.INSTAGRAM_MAX_COMMENTS_PER_POST = 10
             with patch("time.sleep"):
-                result = await provider.discover_users(
-                    keywords=["sofa"], target_city=None, max_users=10, search_config={}
-                )
+                with patch.dict("os.environ", {"INSTAGRAM_SEED_ACCOUNTS": ""}):
+                    result = await provider.discover_users(
+                        keywords=["sofa"], target_city=None, max_users=10, search_config={}
+                    )
 
         assert isinstance(result, list)
 
     @pytest.mark.asyncio
     async def test_max_users_respected(self, provider, mock_client):
-        # 10 unique medias / users
-        medias = [_media(f"1{i:04d}", f"{2000+i}", f"user{i}") for i in range(10)]
-        mock_client.hashtag_medias_recent_v1.return_value = medias
+        users = [_user_short(f"{2000+i}", f"user{i}") for i in range(10)]
+        mock_client.search_users_v1.return_value = users
+        mock_client.user_medias.return_value = []
         mock_client.media_comments.return_value = []
         mock_client.user_info.side_effect = lambda pk: _user_info(str(pk), f"user{pk}")
 
@@ -574,17 +595,19 @@ class TestDiscoverUsers:
             s.INSTAGRAM_MAX_POSTS_PER_HASHTAG = 20
             s.INSTAGRAM_MAX_COMMENTS_PER_POST = 0
             with patch("time.sleep"):
-                result = await provider.discover_users(
-                    keywords=["sofa"], target_city=None, max_users=3, search_config={}
-                )
+                with patch.dict("os.environ", {"INSTAGRAM_SEED_ACCOUNTS": ""}):
+                    result = await provider.discover_users(
+                        keywords=["sofa"], target_city=None, max_users=3, search_config={}
+                    )
 
         assert len(result) <= 3
 
     @pytest.mark.asyncio
     async def test_location_confirmed_from_bio(self, provider, mock_client):
-        media1 = _media("10001", "1001", "priya_designs")
+        search_result = _user_short("1001", "priya_designs")
         profile1 = _user_info("1001", "priya_designs", bio="Interior designer in Chennai.")
-        mock_client.hashtag_medias_recent_v1.return_value = [media1]
+        mock_client.search_users_v1.return_value = [search_result]
+        mock_client.user_medias.return_value = []
         mock_client.media_comments.return_value = []
         mock_client.user_info.return_value = profile1
 
@@ -592,10 +615,11 @@ class TestDiscoverUsers:
             s.INSTAGRAM_MAX_POSTS_PER_HASHTAG = 5
             s.INSTAGRAM_MAX_COMMENTS_PER_POST = 10
             with patch("time.sleep"):
-                result = await provider.discover_users(
-                    keywords=["luxury sofa"], target_city="Chennai",
-                    max_users=10, search_config={},
-                )
+                with patch.dict("os.environ", {"INSTAGRAM_SEED_ACCOUNTS": ""}):
+                    result = await provider.discover_users(
+                        keywords=["luxury sofa"], target_city="Chennai",
+                        max_users=10, search_config={},
+                    )
 
         user = next(u for u in result if u.username == "priya_designs")
         assert user.location_confidence == "confirmed"
@@ -603,14 +627,15 @@ class TestDiscoverUsers:
 
     @pytest.mark.asyncio
     async def test_profile_fields_populated(self, provider, mock_client):
-        media1 = _media("10001", "1001", "priya_designs")
+        search_result = _user_short("1001", "priya_designs")
         profile1 = _user_info(
             "1001", "priya_designs",
             bio="Chennai based",
             follower_count=3500,
             media_count=120,
         )
-        mock_client.hashtag_medias_recent_v1.return_value = [media1]
+        mock_client.search_users_v1.return_value = [search_result]
+        mock_client.user_medias.return_value = []
         mock_client.media_comments.return_value = []
         mock_client.user_info.return_value = profile1
 
@@ -618,9 +643,10 @@ class TestDiscoverUsers:
             s.INSTAGRAM_MAX_POSTS_PER_HASHTAG = 5
             s.INSTAGRAM_MAX_COMMENTS_PER_POST = 10
             with patch("time.sleep"):
-                result = await provider.discover_users(
-                    keywords=["sofa"], target_city=None, max_users=5, search_config={}
-                )
+                with patch.dict("os.environ", {"INSTAGRAM_SEED_ACCOUNTS": ""}):
+                    result = await provider.discover_users(
+                        keywords=["sofa"], target_city=None, max_users=5, search_config={}
+                    )
 
         user = result[0]
         assert user.follower_count == 3500
@@ -630,10 +656,13 @@ class TestDiscoverUsers:
 
     @pytest.mark.asyncio
     async def test_post_captions_stored_in_raw_profile(self, provider, mock_client):
+        # Caption is stored in Strategy 3 (profile expansion from search result).
         caption = "Absolutely loving this premium Italian leather sofa in my Chennai home!"
+        search_result = _user_short("1001", "priya_designs")
         media1 = _media("10001", "1001", "priya_designs", caption=caption)
         profile1 = _user_info("1001", "priya_designs")
-        mock_client.hashtag_medias_recent_v1.return_value = [media1]
+        mock_client.search_users_v1.return_value = [search_result]
+        mock_client.user_medias.return_value = [media1]
         mock_client.media_comments.return_value = []
         mock_client.user_info.return_value = profile1
 
@@ -641,18 +670,22 @@ class TestDiscoverUsers:
             s.INSTAGRAM_MAX_POSTS_PER_HASHTAG = 5
             s.INSTAGRAM_MAX_COMMENTS_PER_POST = 10
             with patch("time.sleep"):
-                result = await provider.discover_users(
-                    keywords=["sofa"], target_city=None, max_users=5, search_config={}
-                )
+                with patch.dict("os.environ", {"INSTAGRAM_SEED_ACCOUNTS": ""}):
+                    result = await provider.discover_users(
+                        keywords=["sofa"], target_city=None, max_users=5, search_config={}
+                    )
 
         assert caption in result[0].raw_profile["post_captions"]
 
     @pytest.mark.asyncio
     async def test_comment_texts_stored_in_raw_profile(self, provider, mock_client):
+        # Comment texts are stored in Strategy 3 (expansion: commenters on search users' posts).
         comment_text = "This is exactly the sofa I was looking for in Chennai!"
+        search_result = _user_short("1001", "poster_user")
         media1 = _media("10001", "1001", "poster_user")
         comment1 = _comment("20001", "1002", "commenter_user", text=comment_text)
-        mock_client.hashtag_medias_recent_v1.return_value = [media1]
+        mock_client.search_users_v1.return_value = [search_result]
+        mock_client.user_medias.return_value = [media1]
         mock_client.media_comments.return_value = [comment1]
         mock_client.user_info.side_effect = lambda pk: (
             _user_info("1001", "poster_user") if str(pk) == "1001"
@@ -663,9 +696,10 @@ class TestDiscoverUsers:
             s.INSTAGRAM_MAX_POSTS_PER_HASHTAG = 5
             s.INSTAGRAM_MAX_COMMENTS_PER_POST = 10
             with patch("time.sleep"):
-                result = await provider.discover_users(
-                    keywords=["sofa"], target_city=None, max_users=10, search_config={}
-                )
+                with patch.dict("os.environ", {"INSTAGRAM_SEED_ACCOUNTS": ""}):
+                    result = await provider.discover_users(
+                        keywords=["sofa"], target_city=None, max_users=10, search_config={}
+                    )
 
         commenter = next(u for u in result if u.username == "commenter_user")
         assert comment_text in commenter.raw_profile["comment_texts"]
@@ -835,6 +869,7 @@ class TestSessionManagement:
             s.instagram_credentials_configured.return_value = True
             s.INSTAGRAM_USERNAME = "test_account"
             s.INSTAGRAM_PASSWORD = "test_pass"
+            s.INSTAGRAM_SESSION_ID = ""
             s.INSTAGRAM_SESSION_FILE = "/tmp/test.json"
             s.INSTAGRAM_MAX_POSTS_PER_HASHTAG = 5
             s.INSTAGRAM_MAX_COMMENTS_PER_POST = 10
@@ -903,6 +938,7 @@ class TestSessionManagement:
     def test_challenge_required_raises_runtime_error(self, provider, mock_client):
         mock_client.login.side_effect = _ChallengeRequired("verify identity")
         mock_client.set_settings.return_value = None
+        provider._session_id = ""
 
         with pytest.raises(RuntimeError, match="challenge verification"):
             provider._reauth()

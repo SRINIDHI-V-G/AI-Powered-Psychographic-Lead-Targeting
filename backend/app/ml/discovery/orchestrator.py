@@ -53,6 +53,7 @@ def _build_provider_registry() -> list[BaseDiscoveryProvider]:
         settings.reddit_credentials_configured()
         or settings.youtube_credentials_configured()
         or settings.instagram_credentials_configured()
+        or settings.google_places_credentials_configured()
     ):
         return []
 
@@ -81,6 +82,14 @@ def _build_provider_registry() -> list[BaseDiscoveryProvider]:
             providers.append(InstagramProvider())
         except Exception as exc:
             logger.warning("InstagramProvider failed to initialise: %s", exc)
+
+    # Google Reviews (local business customer discovery — inferred city location)
+    if settings.google_places_credentials_configured():
+        try:
+            from app.ml.discovery.google_reviews_provider import GoogleReviewsProvider
+            providers.append(GoogleReviewsProvider())
+        except Exception as exc:
+            logger.warning("GoogleReviewsProvider failed to initialise: %s", exc)
 
     return providers
 
@@ -163,9 +172,9 @@ def _get_provider(
         raise RuntimeError(
             "No real discovery provider could be initialised for "
             f"category={product_category!r} region={product_region!r}. "
-            "Configure at least one credential set (REDDIT_CLIENT_ID+SECRET, "
-            "YOUTUBE_API_KEY, or valid Instagram credentials) and ensure the "
-            "provider initialises without errors. "
+            "Configure at least one credential set (REDDIT_USER_AGENT, "
+            "YOUTUBE_API_KEY, GOOGLE_PLACES_API_KEY, or valid Instagram credentials) "
+            "and ensure the provider initialises without errors. "
             "Set FALLBACK_TO_MOCK_ON_ERROR=true to use MockDiscoveryProvider instead."
         )
 

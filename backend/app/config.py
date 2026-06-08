@@ -43,6 +43,26 @@ class Settings(BaseSettings):
     # Free quota: 10,000 units/day. Search costs 100 units; comments cost 1 unit.
     YOUTUBE_API_KEY: str = ""
 
+    # ── Google Places Discovery ───────────────────────────────────────────────
+    # Enable "Places API (New)" (not the legacy Places API) at:
+    #   https://console.cloud.google.com → APIs & Services → Library
+    # The same Google Cloud project as YOUTUBE_API_KEY is fine — just enable
+    # one more API.  Leave blank to skip GoogleReviewsProvider.
+    #
+    # Pricing: Text Search + reviews field ≈ $0.037/request.
+    # 10 keywords × 1 page = ~$0.37 per full discovery run.
+    # Google gives $200/month free credit — effectively free in development.
+    GOOGLE_PLACES_API_KEY: str = ""
+
+    # Max businesses returned per keyword (1–20; hard API limit is 20).
+    GOOGLE_PLACES_MAX_BUSINESSES_PER_KEYWORD: int = 20
+
+    # Number of keywords processed per discovery run (controls cost).
+    GOOGLE_PLACES_MAX_KEYWORDS: int = 10
+
+    # BCP-47 language code for review text.  "en" returns English reviews first.
+    GOOGLE_PLACES_LANGUAGE: str = "en"
+
     # ── Instagram Discovery ───────────────────────────────────────────────────
     # Uses instagrapi (Instagram private API). Provide a dedicated account —
     # do NOT use your personal account to avoid lockouts.
@@ -59,6 +79,11 @@ class Settings(BaseSettings):
     # Discovery limits — lower values reduce API load but may reduce user coverage.
     INSTAGRAM_MAX_POSTS_PER_HASHTAG: int = 20
     INSTAGRAM_MAX_COMMENTS_PER_POST: int = 30
+    # Comma-separated Instagram usernames of seed / competitor accounts.
+    # The provider collects commenters from their recent posts as discovery leads.
+    # Can also be set per-job in search_config["seed_accounts"].
+    # Example: INSTAGRAM_SEED_ACCOUNTS=woodenstreet,urbanladder,pepperfry
+    INSTAGRAM_SEED_ACCOUNTS: str = ""
 
     # ── Discovery Behaviour ───────────────────────────────────────────────────
     # When True, always use MockDiscoveryProvider regardless of credentials.
@@ -129,12 +154,16 @@ class Settings(BaseSettings):
         password_ok = bool(self.INSTAGRAM_USERNAME and self.INSTAGRAM_PASSWORD)
         return session_id_ok or password_ok
 
+    def google_places_credentials_configured(self) -> bool:
+        return bool(self.GOOGLE_PLACES_API_KEY)
+
     def use_mock_discovery(self) -> bool:
         """True → use MockDiscoveryProvider for all discovery jobs."""
         return self.MOCK_DISCOVERY or not (
             self.reddit_credentials_configured()
             or self.youtube_credentials_configured()
             or self.instagram_credentials_configured()
+            or self.google_places_credentials_configured()
         )
 
     def celery_broker(self) -> str:
@@ -229,6 +258,16 @@ def warn_missing_credentials() -> None:
         logger.info(
             "✓ Instagram credentials configured (account=%s)", settings.INSTAGRAM_USERNAME
         )
+
+    if not settings.google_places_credentials_configured():
+        logger.warning(
+            "⚠️  Google Places API key not configured. "
+            "Google Reviews discovery will use MockDiscoveryProvider. "
+            "Enable 'Places API (New)' at https://console.cloud.google.com and set "
+            "GOOGLE_PLACES_API_KEY in .env to enable real Google Reviews discovery."
+        )
+    else:
+        logger.info("✓ Google Places API key configured.")
 
     if settings.celery_enabled():
         logger.info("✓ Celery enabled (broker=%s)", settings.celery_broker()[:30])

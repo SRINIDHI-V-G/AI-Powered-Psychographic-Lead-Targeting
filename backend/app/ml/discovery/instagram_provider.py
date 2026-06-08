@@ -15,23 +15,34 @@ Session persistence:
   The session file stores cookies and device fingerprint so the client can resume
   without re-login on restart. Mount a persistent volume at this path in Docker.
 
-Discovery flow:
-  1. Convert motivation keywords → Instagram hashtags (e.g. "luxury sofa" → "luxurysofa").
-  2. Search each hashtag for recent posts (up to INSTAGRAM_MAX_POSTS_PER_HASHTAG).
-  3. Collect post authors as candidate leads (discovery_method = "poster").
-  4. Collect commenters on each post (discovery_method = "commenter").
-  5. Merge records for users found via both sources (discovery_method = "both").
-  6. Fetch full profiles for all discovered users (filter out private profiles).
-  7. Return as RawDiscoveredUser list.
+Discovery flow (does NOT use hashtag APIs — those are blocked by Instagram):
+  Strategy 1 — Keyword user search:
+    search_users(keyword) for each motivation keyword.
+    Finds accounts whose name / bio / username matches the keyword.
+    discovery_method = "search"
+
+  Strategy 2 — Seed account comment harvesting:
+    For each account in search_config["seed_accounts"] (or INSTAGRAM_SEED_ACCOUNTS env var):
+      fetch recent posts → collect commenters.
+    Commenters are active audience members of competitor / niche accounts.
+    discovery_method = "commenter"
+
+  Strategy 3 — Profile expansion:
+    For each user from Strategy 1, fetch their recent posts and collect
+    commenters. Runs only when discovered user count is below max_users.
+    Post captions are also stored for NLP.
+    discovery_method = "commenter" (for newly found) or enriches existing "search" user
+
+  Merge: a user found via both search and as a commenter gets discovery_method = "both".
 
 discovery_method field (stored in raw_profile):
-  "poster"    — user was found as a post author via hashtag search
+  "search"    — user was found via keyword search
   "commenter" — user was found commenting on a relevant post
-  "both"      — user was found as both poster and commenter
+  "both"      — user was found via both search and as commenter
 
 Rate limiting:
   - instagrapi enforces request delays via client.delay_range = [1, 3] (seconds).
-  - Additional 1.5s sleep between hashtag searches.
+  - Additional 1.5s sleep between search queries.
   - PleaseWaitFewMinutes exception → 65s sleep + retry.
 
 Error handling:
@@ -92,7 +103,7 @@ def _infer_location(
 ) -> tuple[str | None, str]:
     """
     Infer location confidence from Instagram biography and supplementary text
-    (captions, hashtag names).
+    (captions, source labels).
 
     Returns (location_text, confidence_level).
 
@@ -130,12 +141,14 @@ def _keywords_to_hashtags(keywords: list[str]) -> list[str]:
       "luxury sofa"     → ["luxurysofa", "luxury", "sofa"]
       "interior design" → ["interiordesign", "interior", "design"]
       "premium leather" → ["premiumleather", "premium", "leather"]
+
+    Note: hashtag_medias_recent_v1 is blocked by Instagram for most sessions.
+    This function is retained for reference / testing purposes.
     """
     seen: set[str] = set()
     hashtags: list[str] = []
 
     for kw in keywords:
-        # Strip special characters, lower-case, split on whitespace
         cleaned = re.sub(r"[^a-zA-Z0-9\s]", "", kw.lower()).strip()
         if not cleaned:
             continue
@@ -144,13 +157,11 @@ def _keywords_to_hashtags(keywords: list[str]) -> list[str]:
         if not words:
             continue
 
-        # Compound form first (highest specificity)
         compound = "".join(words)
         if compound not in seen and 3 <= len(compound) <= 30:
             seen.add(compound)
             hashtags.append(compound)
 
-        # Individual meaningful words (≥4 chars)
         for word in words:
             if word not in seen and len(word) >= 4:
                 seen.add(word)
@@ -159,18 +170,36 @@ def _keywords_to_hashtags(keywords: list[str]) -> list[str]:
     return hashtags[:30]
 
 
+def _get_seed_accounts(search_config: dict) -> list[str]:
+    """
+    Return seed account usernames from search_config or INSTAGRAM_SEED_ACCOUNTS env var.
+
+    search_config["seed_accounts"] takes precedence over the env var.
+    Returns an empty list when neither is configured.
+    """
+    if search_config.get("seed_accounts"):
+        return list(search_config["seed_accounts"])
+    env_seeds = os.environ.get("INSTAGRAM_SEED_ACCOUNTS", "")
+    return [s.strip() for s in env_seeds.split(",") if s.strip()]
+
+
 class InstagramProvider(BaseDiscoveryProvider):
     """
-    Discovers Instagram users from public hashtag-based content.
+    Discovers Instagram users via keyword search, seed account harvesting,
+    and profile expansion — without relying on hashtag APIs.
 
-    Finds two classes of leads:
-      Posters    — users who publish content related to product keywords.
-      Commenters — users who engage with (comment on) relevant posts.
+    Three discovery strategies (run in order):
 
-    Users discovered via both paths are merged with discovery_method = "both".
+    Strategy 1 — Keyword search:
+      search_users(keyword) for each motivation keyword.
 
-    The provider integrates into the existing discovery architecture without
-    any special-case logic in NLP, OCEAN, Matching, or Dashboard components.
+    Strategy 2 — Seed account comment harvesting:
+      Configured via search_config["seed_accounts"] or INSTAGRAM_SEED_ACCOUNTS env var.
+      Fetches commenters from recent posts on known niche/competitor accounts.
+
+    Strategy 3 — Profile expansion:
+      Collects post captions and commenters from Strategy-1 users.
+
     All output uses the same RawDiscoveredUser / ContentItem contracts.
     """
 
@@ -272,45 +301,43 @@ class InstagramProvider(BaseDiscoveryProvider):
         search_config: dict,
     ) -> list[RawDiscoveredUser]:
         """
-        Discover Instagram users from hashtag-based content.
+        Discover Instagram users via keyword search, seed account comment
+        harvesting, and profile expansion.
 
         Steps:
-          1. Convert motivation keywords to Instagram hashtags.
-          2. For each hashtag: collect recent posts and their commenters.
-          3. Merge poster / commenter records for the same user.
+          1. Search users by each keyword (search_users).
+          2. Harvest commenters from seed/competitor accounts.
+          3. Expand by collecting posts and commenters from keyword-matched users.
           4. Fetch full public profiles.
           5. Return up to max_users RawDiscoveredUser objects.
         """
         import asyncio
         loop = asyncio.get_running_loop()
 
-        hashtags = _keywords_to_hashtags(keywords)
         logger.info(
-            "InstagramProvider.discover_users: hashtags=%s keywords=%s max=%d",
-            hashtags[:6],
+            "InstagramProvider.discover_users: keywords=%s max=%d strategy=multi",
             keywords[:4],
             max_users,
         )
 
         result = await loop.run_in_executor(
-            None, self._discover_sync, hashtags, target_city, max_users, search_config
+            None, self._discover_sync, keywords, target_city, max_users, search_config
         )
         logger.info("InstagramProvider: discovered %d users", len(result))
         return result
 
     def _discover_sync(
         self,
-        hashtags: list[str],
+        keywords: list[str],
         target_city: str | None,
         max_users: int,
         search_config: dict,
     ) -> list[RawDiscoveredUser]:
         """
-        Synchronous discovery implementation — runs in the thread pool executor.
+        Synchronous multi-strategy discovery — runs in the thread pool executor.
 
         Accumulates user data in a dict keyed by Instagram PK so that
-        poster/commenter merging happens naturally as the same user is
-        encountered in different contexts.
+        merge between strategies happens naturally.
         """
         max_posts = settings.INSTAGRAM_MAX_POSTS_PER_HASHTAG
         max_comments = settings.INSTAGRAM_MAX_COMMENTS_PER_POST
@@ -318,104 +345,138 @@ class InstagramProvider(BaseDiscoveryProvider):
         # pk (str) → accumulated user data dict
         accumulated: dict[str, dict[str, Any]] = {}
 
-        for hashtag in hashtags:
-            # Collect extra candidates beyond max_users to allow for filtering
-            # (private profiles, unavailable accounts, etc.)
+        # ── Strategy 1: Keyword user search ──────────────────────────────────
+        for keyword in keywords[:8]:
             if len(accumulated) >= max_users * 3:
                 break
-
             try:
-                medias = self._api_call(
-                    self._client.hashtag_medias_recent_v1,
-                    hashtag,
-                    amount=max_posts,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "InstagramProvider: hashtag %r failed: %s", hashtag, exc
-                )
-                continue
-
-            for media in medias:
-                try:
-                    poster_pk = str(media.user.pk)
-                    caption = (getattr(media, "caption_text", None) or "").strip()
-
-                    # ── Register or update poster ─────────────────────────
-                    if poster_pk not in accumulated:
-                        accumulated[poster_pk] = _new_user_entry(
-                            pk=poster_pk,
-                            username=media.user.username,
-                            display_name=getattr(media.user, "full_name", "") or media.user.username,
-                            method="poster",
-                            hashtag=hashtag,
+                users = self._api_call(self._client.search_users_v1, keyword, count=20)
+                for u in (users or []):
+                    pk = str(u.pk)
+                    if pk not in accumulated:
+                        accumulated[pk] = _new_user_entry(
+                            pk=pk,
+                            username=u.username,
+                            display_name=getattr(u, "full_name", "") or u.username,
+                            method="search",
+                            source=keyword,
                         )
                     else:
-                        entry = accumulated[poster_pk]
-                        if entry["discovery_method"] == "commenter":
-                            entry["discovery_method"] = "both"
-                        _add_hashtag(entry, hashtag)
+                        _add_source(accumulated[pk], keyword)
+            except Exception as exc:
+                logger.warning(
+                    "InstagramProvider: search_users %r failed: %s", keyword, exc
+                )
+            time.sleep(1.5)
 
-                    if caption:
-                        accumulated[poster_pk]["post_captions"].append(caption[:800])
+        # ── Strategy 2: Seed account comment harvesting ───────────────────────
+        seed_accounts = _get_seed_accounts(search_config)
+        for seed_username in seed_accounts[:8]:
+            if len(accumulated) >= max_users * 3:
+                break
+            try:
+                seed_info = self._api_call(
+                    self._client.user_info_by_username, seed_username
+                )
+                seed_pk = str(seed_info.pk)
+                source_label = f"seed:{seed_username}"
 
-                    # ── Collect commenters from this post ─────────────────
+                medias = self._api_call(
+                    self._client.user_medias,
+                    seed_info.pk,
+                    amount=max(3, max_posts // 4),
+                )
+                for media in (medias or []):
                     try:
                         comments = self._api_call(
                             self._client.media_comments,
                             media.pk,
                             amount=max_comments,
                         )
-                    except Exception as exc:
-                        logger.debug(
-                            "InstagramProvider: comments unavailable for media %s: %s",
-                            media.pk, exc,
-                        )
-                        comments = []
-
-                    for comment in comments:
-                        try:
-                            comment_text = (getattr(comment, "text", None) or "").strip()
-                            if not comment_text or len(comment_text) < 5:
+                        for comment in (comments or []):
+                            ctxt = (getattr(comment, "text", None) or "").strip()
+                            if not ctxt or len(ctxt) < 5:
                                 continue
-
-                            commenter_pk = str(comment.user.pk)
-                            if commenter_pk == poster_pk:
-                                continue  # skip author replying to own post
-
-                            if commenter_pk not in accumulated:
-                                accumulated[commenter_pk] = _new_user_entry(
-                                    pk=commenter_pk,
+                            cpk = str(comment.user.pk)
+                            if cpk == seed_pk:
+                                continue
+                            if cpk not in accumulated:
+                                accumulated[cpk] = _new_user_entry(
+                                    pk=cpk,
                                     username=comment.user.username,
                                     display_name=getattr(comment.user, "full_name", "") or comment.user.username,
                                     method="commenter",
-                                    hashtag=hashtag,
+                                    source=source_label,
                                 )
                             else:
-                                entry = accumulated[commenter_pk]
-                                if entry["discovery_method"] == "poster":
+                                entry = accumulated[cpk]
+                                if entry["discovery_method"] == "search":
                                     entry["discovery_method"] = "both"
-                                _add_hashtag(entry, hashtag)
-
-                            accumulated[commenter_pk]["comment_texts"].append(
-                                comment_text[:500]
-                            )
-                        except Exception as exc:
-                            logger.debug("Comment processing error: %s", exc)
-                            continue
-
-                except Exception as exc:
-                    logger.debug("Media processing error: %s", exc)
-                    continue
-
-            # Polite inter-hashtag delay
+                                _add_source(entry, source_label)
+                            accumulated[cpk]["comment_texts"].append(ctxt[:500])
+                    except Exception as exc:
+                        logger.debug(
+                            "InstagramProvider: comments failed for media %s: %s",
+                            media.pk, exc,
+                        )
+                    time.sleep(0.5)
+            except Exception as exc:
+                logger.warning(
+                    "InstagramProvider: seed account %r failed: %s",
+                    seed_username, exc,
+                )
             time.sleep(1.5)
 
-        # ── Fetch full profiles and build RawDiscoveredUser objects ────────
-        result: list[RawDiscoveredUser] = []
-        candidates = list(accumulated.items())
+        # ── Strategy 3: Profile expansion from keyword-matched users ──────────
+        if len(accumulated) < max_users:
+            search_candidates = [
+                (pk, data)
+                for pk, data in list(accumulated.items())
+                if data["discovery_method"] == "search"
+            ]
+            for user_pk, data in search_candidates[:5]:
+                if len(accumulated) >= max_users * 2:
+                    break
+                try:
+                    medias = self._api_call(
+                        self._client.user_medias, int(user_pk), amount=3
+                    )
+                    for media in (medias or []):
+                        caption = (getattr(media, "caption_text", None) or "").strip()
+                        if caption and len(caption) >= 10:
+                            accumulated[user_pk]["post_captions"].append(caption[:800])
+                        try:
+                            comments = self._api_call(
+                                self._client.media_comments, media.pk, amount=15
+                            )
+                            for comment in (comments or []):
+                                ctxt = (getattr(comment, "text", None) or "").strip()
+                                if not ctxt or len(ctxt) < 5:
+                                    continue
+                                cpk = str(comment.user.pk)
+                                if cpk == user_pk:
+                                    continue
+                                if cpk not in accumulated:
+                                    accumulated[cpk] = _new_user_entry(
+                                        pk=cpk,
+                                        username=comment.user.username,
+                                        display_name=getattr(comment.user, "full_name", "") or comment.user.username,
+                                        method="commenter",
+                                        source=f"expanded:{data['username']}",
+                                    )
+                                accumulated[cpk]["comment_texts"].append(ctxt[:500])
+                        except Exception:
+                            continue
+                except Exception as exc:
+                    logger.debug(
+                        "InstagramProvider: expansion failed for pk=%s: %s",
+                        user_pk, exc,
+                    )
+                time.sleep(1.0)
 
-        for user_pk, data in candidates:
+        # ── Fetch full profiles and build RawDiscoveredUser objects ────────────
+        result: list[RawDiscoveredUser] = []
+        for user_pk, data in list(accumulated.items()):
             if len(result) >= max_users:
                 break
 
@@ -430,8 +491,8 @@ class InstagramProvider(BaseDiscoveryProvider):
                     continue
 
                 bio = (getattr(profile, "biography", None) or "").strip()
-                hashtag_text = " ".join(data.get("hashtags_seen", []))
-                location, confidence = _infer_location(bio, target_city, hashtag_text)
+                source_text = " ".join(data.get("hashtags_seen", []))
+                location, confidence = _infer_location(bio, target_city, source_text)
 
                 username = getattr(profile, "username", data["username"])
                 result.append(
@@ -510,7 +571,7 @@ class InstagramProvider(BaseDiscoveryProvider):
                 engagement=0,
             ))
 
-        # 2. Post captions captured during hashtag discovery
+        # 2. Post captions captured during discovery
         for caption in raw.get("post_captions", []):
             if len(items) >= max_items:
                 break
@@ -716,7 +777,7 @@ class InstagramProvider(BaseDiscoveryProvider):
             logger.info("InstagramProvider: re-authenticated successfully")
         except self._ChallengeRequired as exc:
             raise RuntimeError(
-                "Instagram challenge required — resolve via app/browser, then restart. "
+                "Instagram challenge verification required — resolve via app/browser, then restart. "
                 "Detail: " + str(exc)
             ) from exc
 
@@ -755,21 +816,25 @@ def _new_user_entry(
     username: str,
     display_name: str,
     method: str,
-    hashtag: str,
+    source: str,
 ) -> dict[str, Any]:
     """Create a fresh accumulated-user entry dict."""
     return {
         "username": username,
         "display_name": display_name,
         "pk": pk,
-        "discovery_method": method,   # "poster" | "commenter" | "both"
+        "discovery_method": method,   # "search" | "commenter" | "both"
         "post_captions": [],
         "comment_texts": [],
-        "hashtags_seen": [hashtag],
+        "hashtags_seen": [source],    # discovery source labels (keywords, seed refs, etc.)
     }
 
 
-def _add_hashtag(entry: dict[str, Any], hashtag: str) -> None:
-    """Add a hashtag to the entry's seen list (deduplicating)."""
-    if hashtag not in entry["hashtags_seen"]:
-        entry["hashtags_seen"].append(hashtag)
+def _add_source(entry: dict[str, Any], source: str) -> None:
+    """Add a discovery source label to the entry's seen list (deduplicating)."""
+    if source not in entry["hashtags_seen"]:
+        entry["hashtags_seen"].append(source)
+
+
+# Keep old name as alias so existing call-sites (tests) that import _add_hashtag still work.
+_add_hashtag = _add_source

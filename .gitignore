@@ -161,3 +161,46 @@ $RECYCLE.BIN/
 *.orig
 *.rej
 *.patch
+
+# ──────────────────────────────────────────────────────────────────────────────
+# pip --target installs (test deps installed directly into backend/)
+# ──────────────────────────────────────────────────────────────────────────────
+backend/*.dist-info/
+backend/_pytest/
+backend/pytest/
+backend/pytest_asyncio/
+backend/anyio/
+backend/anyio-*/
+backend/httpx/
+backend/httpx-*/
+backend/httpcore/
+backend/httpcore-*/
+backend/certifi/
+backend/certifi-*/
+backend/colorama/
+backend/colorama-*/
+backend/h11/
+backend/h11-*/
+backend/idna/
+backend/idna-*/
+backend/iniconfig/
+backend/iniconfig-*/
+backend/packaging/
+backend/packaging-*/
+backend/pluggy/
+backend/pluggy-*/
+backend/pygments/
+backend/pygments-*/
+backend/typing_extensions.py
+backend/typing_extensions-*/
+backend/py.py
+backend/bin/
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Runtime output logs
+# ──────────────────────────────────────────────────────────────────────────────
+backend/backend_err.txt
+backend/backend_out.txt
+frontend/frontend_err.txt
+frontend/frontend_out.txt
+verify_screenshots/
