@@ -206,6 +206,8 @@ class InstagramProvider(BaseDiscoveryProvider):
         self._PleaseWaitFewMinutes = PleaseWaitFewMinutes
         self._ChallengeRequired = ChallengeRequired
 
+        self._session_id = settings.INSTAGRAM_SESSION_ID
+
         self._client = Client()
         # Random delay [1–3 s] between API requests — critical for staying
         # within Instagram's undocumented rate limits.
@@ -586,122 +588,136 @@ class InstagramProvider(BaseDiscoveryProvider):
 
     def _login_with_session_recovery(self) -> None:
         """
-        Authenticate with Instagram, preferring session restoration over fresh login.
+        Authenticate using proven reference implementation:
+          1. Load session file (restores cookies + device fingerprint)
+          2. Try login_by_sessionid if INSTAGRAM_SESSION_ID is set
+          3. Try username+password login (reuses loaded session if valid)
+          4. On LoginRequired → clear stale session → fresh password login
+          5. Save session after any successful auth
+          6. Verify API access (non-fatal — logs warning, does NOT raise)
 
-        Flow:
-          1. If session file exists, load it (restores cookies + device fingerprint).
-          2. Call client.login() — uses loaded cookies if valid, else sends credentials.
-          3. On LoginRequired after loading a session → clear stale session, retry fresh.
-          4. Save the resulting session to file after any successful login.
+        This mirrors the proven architecture: cl.load_settings → cl.login → cl.dump_settings
         """
         session_loaded = False
         if os.path.exists(self._session_file):
             try:
                 self._client.load_settings(self._session_file)
                 session_loaded = True
-                logger.info(
-                    "InstagramProvider: session loaded from %s", self._session_file
-                )
+                logger.info("InstagramProvider: session loaded from %s", self._session_file)
             except Exception as exc:
-                logger.warning(
-                    "InstagramProvider: could not load session from %s: %s",
-                    self._session_file, exc,
-                )
+                logger.warning("InstagramProvider: could not load session: %s", exc)
 
+        # Path A: session ID login (most reliable — avoids challenge flows)
+        if self._session_id:
+            try:
+                self._client.login_by_sessionid(self._session_id)
+                self._save_session()
+                logger.info("InstagramProvider: authenticated via sessionid")
+                self._verify_api_access_soft()
+                return
+            except Exception as exc:
+                logger.warning("InstagramProvider: sessionid login failed (%s), trying password", exc)
+
+        # Path B: username + password (uses loaded session cookies if present)
         try:
             self._client.login(self._username, self._password)
             self._save_session()
-            logger.info(
-                "InstagramProvider: authenticated (session_reused=%s)", session_loaded
-            )
-        except self._LoginRequired:
+            logger.info("InstagramProvider: authenticated (session_reused=%s)", session_loaded)
+        except self._LoginRequired as exc:
+            exc_str = str(exc).lower()
+            if "blacklist" in exc_str or "ip" in exc_str or "change your ip" in exc_str:
+                raise RuntimeError(
+                    f"Instagram blocked this server's IP address. "
+                    "This is a network restriction, not a credential error. "
+                    "Fix options:\n"
+                    "  1. Deploy to Railway/Render (cloud IPs are usually clean)\n"
+                    "  2. Set INSTAGRAM_SESSION_ID to a session ID from your phone/browser\n"
+                    "  3. Use a VPN with a residential IP\n"
+                    f"Detail: {exc}"
+                ) from exc
             if session_loaded:
-                # Stored session is stale — clear and perform a fresh login.
-                logger.warning(
-                    "InstagramProvider: stored session expired, performing fresh login"
-                )
+                logger.warning("InstagramProvider: stored session expired — fresh login")
                 self._client.set_settings({})
                 self._client.login(self._username, self._password)
                 self._save_session()
             else:
-                raise
+                raise RuntimeError(
+                    f"Instagram login failed for @{self._username}. "
+                    "Check INSTAGRAM_USERNAME / INSTAGRAM_PASSWORD in .env. "
+                    f"Detail: {exc}"
+                ) from exc
+        except self._ChallengeRequired as exc:
+            raise RuntimeError(
+                "Instagram challenge required — resolve the security check in your "
+                "Instagram app or browser from this IP, then restart. Detail: " + str(exc)
+            ) from exc
+        except Exception as exc:
+            exc_str = str(exc).lower()
+            if "blacklist" in exc_str or "change your ip" in exc_str:
+                raise RuntimeError(
+                    f"Instagram blocked this server's IP address. Deploy to Railway or use VPN. Detail: {exc}"
+                ) from exc
+            raise
 
-        # Verify the session actually works for the private API (not just account_info).
-        # A browser-derived session passes login() but fails on all real API calls.
-        # Catch this early so the orchestrator falls back to mock instead of running
-        # a provider that silently returns 0 results for every hashtag.
-        self._verify_api_access()
+        # Soft verify — only logs a warning if the session is browser-derived
+        self._verify_api_access_soft()
 
-    def _verify_api_access(self) -> None:
+    def _verify_api_access_soft(self) -> None:
         """
-        Confirm the current session can actually reach the private API.
+        Non-fatal API verification. Logs a warning if the session appears invalid
+        but does NOT raise — the orchestrator will see zero results and log accordingly.
 
-        A browser-derived sessionid passes cl.login() (no challenge triggered
-        because user_id is set from the session file), but all mobile private-API
-        calls subsequently return LoginRequired.  Catching this here lets the
-        orchestrator fall back to MockDiscoveryProvider rather than silently
-        producing zero results.
-
-        We probe user_info() on the own account — the lightest private-API call
-        available without a hashtag search.
+        A browser-derived sessionid passes login() but fails on all mobile-API calls.
+        We detect this here so operators see a clear warning rather than silent 0 results.
         """
         try:
-            uid = None
             if self._client.user_id:
                 uid = int(self._client.user_id)
-            if uid:
                 self._client.user_info(uid)
-                logger.info("InstagramProvider: private-API access verified (uid=%d)", uid)
-        except self._LoginRequired as exc:
-            raise RuntimeError(
-                "Instagram session appears valid but the private API rejected all requests "
-                "(LoginRequired on user_info). "
-                "This usually means a browser-derived sessionid was used instead of a "
-                "proper mobile app session. "
-                "Run backend/verify_instagram.py and approve the login in your "
-                "Instagram app to create a valid mobile session."
-            ) from exc
+                logger.info(
+                    "InstagramProvider: private-API access verified (uid=%d)", uid
+                )
+        except self._LoginRequired:
+            logger.warning(
+                "InstagramProvider: session loaded but private API rejected the call "
+                "(LoginRequired on user_info). The session may be browser-derived. "
+                "Will attempt re-auth on first real API call. "
+                "Set INSTAGRAM_SESSION_ID to a mobile-app session ID for best results."
+            )
         except Exception:
-            # Any other exception (network, timeout, etc.) — don't block startup.
-            pass
+            pass  # Network issues at startup — don't block
 
     def _save_session(self) -> None:
-        """Persist the current Instagram session to the configured file."""
+        """Persist the current session to the configured file (proven: dump_settings)."""
         try:
             parent = os.path.dirname(self._session_file)
             if parent:
                 os.makedirs(parent, exist_ok=True)
             self._client.dump_settings(self._session_file)
-            logger.debug(
-                "InstagramProvider: session persisted to %s", self._session_file
-            )
+            logger.debug("InstagramProvider: session persisted to %s", self._session_file)
         except Exception as exc:
-            logger.warning(
-                "InstagramProvider: could not persist session to %s: %s",
-                self._session_file, exc,
-            )
+            logger.warning("InstagramProvider: could not save session: %s", exc)
 
     def _reauth(self) -> None:
-        """
-        Force a fresh re-authentication by clearing the stale session.
-        Raises RuntimeError if Instagram requires a manual challenge (2FA / suspicious login).
-        """
+        """Force fresh re-authentication by clearing the stale session state."""
         try:
             self._client.set_settings({})
+            # Try session ID first (more reliable)
+            if self._session_id:
+                try:
+                    self._client.login_by_sessionid(self._session_id)
+                    self._save_session()
+                    logger.info("InstagramProvider: re-authenticated via sessionid")
+                    return
+                except Exception:
+                    pass
             self._client.login(self._username, self._password)
             self._save_session()
             logger.info("InstagramProvider: re-authenticated successfully")
         except self._ChallengeRequired as exc:
-            logger.error(
-                "InstagramProvider: Instagram requires manual challenge verification. "
-                "Please resolve the security check in a browser and restart the "
-                "application. Detail: %s", exc,
-            )
             raise RuntimeError(
-                "Instagram challenge verification required (2FA or suspicious-login check). "
-                "Please log in to Instagram manually from the same IP address and resolve "
-                "any security check, then restart the application. "
-                "If the problem persists, use a different dedicated account."
+                "Instagram challenge required — resolve via app/browser, then restart. "
+                "Detail: " + str(exc)
             ) from exc
 
     # ── API call wrapper ──────────────────────────────────────────────────────

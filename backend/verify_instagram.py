@@ -1,163 +1,145 @@
 """
-Instagram login verifier — handles Bloks push-notification challenge.
+Instagram provider verification — tests the full Instagram discovery pipeline.
 
-FIRST TIME SETUP
-----------------
-Instagram triggers a "Suspicious login" security challenge the first time
-instagrapi (simulated Android device) logs in.  Instagram sends a push
-notification to your Instagram app saying "New login from Android — was it you?"
+Architecture: instagrapi (Instagram private mobile API).
+  No OAuth required. Uses username+password or session ID.
 
-Steps:
-  1. Run this script.
-  2. Immediately open your Instagram app.
-  3. Go to  Settings → Security → Login Activity  (or tap the push notification).
-  4. Find the recent Android login and tap  "It was me"  or  "Approve".
-  5. Come back — the script retries automatically every 20 s for up to 2 min.
-  6. Once approved, a session file is saved.  Future logins skip the challenge.
-
-SUBSEQUENT RUNS
----------------
-The saved  instagram_session.json  restores the trusted device fingerprint.
-No challenge will appear until the session expires (~2 weeks).
+If you get "IP blacklisted", deploy to Railway or use a VPN.
+To bypass IP blocks: get your session ID from your phone/browser and
+set INSTAGRAM_SESSION_ID in .env.
 
 Run:
   cd backend
-  venv\\Scripts\\python.exe verify_instagram.py
+  python verify_instagram.py
 """
-import sys
-import os
-import time
-import logging
+import asyncio, sys, os
+import httpx
 
-sys.path.insert(0, ".")
-logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
+sys.stdout.reconfigure(encoding='utf-8')
 
-from dotenv import load_dotenv
-load_dotenv(".env")
-from app.config import settings
 
-from instagrapi import Client
-from instagrapi.exceptions import (
-    ChallengeRequired,
-    ChallengeUnknownStep,
-    LoginRequired,
-)
+def get_session_id_instructions() -> str:
+    return """
+HOW TO GET YOUR INSTAGRAM SESSION ID:
+  1. Open Instagram in Chrome/Firefox (logged in as mbasuccessdesk)
+  2. Press F12 → Application tab → Cookies → www.instagram.com
+  3. Find the cookie named 'sessionid'
+  4. Copy the value (long string like 'XXXXXXX%3AYYYYYYY%3AZ')
+  5. Set INSTAGRAM_SESSION_ID=<that value> in backend/.env
+  6. Restart backend and run verify_instagram.py again
+"""
 
-# ── Helper: attempt one login ─────────────────────────────────────────────────
 
-def _try_login(cl: Client) -> bool:
-    """Return True on success, False if challenge is pending, raise on hard error."""
+async def main():
+    print("=" * 60)
+    print("INSTAGRAM PROVIDER VERIFICATION (instagrapi)")
+    print("=" * 60)
+
+    from app.config import settings
+
+    # 1. Config
+    print(f"\n[1] Config")
+    print(f"  instagram_credentials_configured(): {settings.instagram_credentials_configured()}")
+    print(f"  INSTAGRAM_USERNAME: {settings.INSTAGRAM_USERNAME}")
+    print(f"  INSTAGRAM_PASSWORD: {'*' * len(settings.INSTAGRAM_PASSWORD) if settings.INSTAGRAM_PASSWORD else '(not set)'}")
+    print(f"  INSTAGRAM_SESSION_ID: {'set' if settings.INSTAGRAM_SESSION_ID else '(not set)'}")
+    print(f"  INSTAGRAM_SESSION_FILE: {settings.INSTAGRAM_SESSION_FILE}")
+    session_file_exists = os.path.exists(settings.INSTAGRAM_SESSION_FILE)
+    print(f"  Session file exists: {session_file_exists}")
+
+    # 2. Network connectivity
+    print(f"\n[2] Network connectivity")
     try:
-        cl.login(settings.INSTAGRAM_USERNAME, settings.INSTAGRAM_PASSWORD)
-        return True
-    except (ChallengeUnknownStep, ChallengeRequired):
-        return False
-
-
-def _save_and_report(cl: Client) -> None:
-    info = cl.account_info()
-    print(f"\n✓  LOGIN SUCCESS")
-    print(f"   Username  : @{info.username}")
-    print(f"   Full name : {info.full_name}")
-    print(f"   pk        : {info.pk}")
-    cl.dump_settings(settings.INSTAGRAM_SESSION_FILE)
-    print(f"   Session saved → {settings.INSTAGRAM_SESSION_FILE}")
-    print("\nInstagram provider is ready.")
-    print("Start the backend server:  uvicorn app.main:app --reload --port 8000")
-
-
-# ── Main ──────────────────────────────────────────────────────────────────────
-
-print("=" * 62)
-print("Instagram session setup")
-print("=" * 62)
-print(f"Account      : {settings.INSTAGRAM_USERNAME}")
-print(f"Session file : {settings.INSTAGRAM_SESSION_FILE}")
-print()
-
-cl = Client()
-cl.delay_range = [1, 3]
-
-# ── Step 1: try loading an existing valid session ─────────────────────────────
-if os.path.exists(settings.INSTAGRAM_SESSION_FILE):
-    try:
-        cl.load_settings(settings.INSTAGRAM_SESSION_FILE)
-        print(f"Loaded saved session from {settings.INSTAGRAM_SESSION_FILE}")
+        r = httpx.get("https://www.instagram.com/",
+            headers={"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"},
+            timeout=10, follow_redirects=True)
+        print(f"  instagram.com: HTTP {r.status_code}")
+        web_ok = r.status_code == 200
     except Exception as e:
-        print(f"Could not load existing session ({e}), starting fresh.")
+        print(f"  instagram.com: ERROR {e}")
+        web_ok = False
 
-print("Attempting login ...")
-print()
-
-if _try_login(cl):
-    _save_and_report(cl)
-    sys.exit(0)
-
-# ── Step 2: challenge hit — wait for app approval ─────────────────────────────
-print("=" * 62)
-print("INSTAGRAM SECURITY CHALLENGE DETECTED")
-print("=" * 62)
-print()
-print("Instagram requires you to approve this login in the Instagram")
-print("app on your phone.  Steps:")
-print()
-print("  1. Open the Instagram app on your phone NOW.")
-print("  2. Tap the notification  'New login from Android — was it you?'")
-print("     OR go to  Settings (⚙) → Security → Login Activity.")
-print("  3. Find the entry labelled 'Android' or 'Unknown device'.")
-print("  4. Tap  'It was me'  or  'Approve'.")
-print()
-print("This script will retry automatically every 20 seconds.")
-print("You have 2 minutes.")
-print()
-
-RETRY_INTERVAL = 20   # seconds between retries
-MAX_WAIT = 120        # seconds total
-
-start = time.time()
-attempt = 0
-
-while time.time() - start < MAX_WAIT:
-    elapsed = int(time.time() - start)
-    remaining = MAX_WAIT - elapsed
-    attempt += 1
-    print(f"[{elapsed:3d}s] Retry #{attempt} — {remaining}s remaining ...")
-
-    # Fresh client with same device UUID so Instagram recognises the approved device
-    cl2 = Client()
-    cl2.delay_range = [1, 3]
-    if os.path.exists(settings.INSTAGRAM_SESSION_FILE):
-        try:
-            cl2.load_settings(settings.INSTAGRAM_SESSION_FILE)
-        except Exception:
-            pass
-
+    # Test mobile API endpoint (what instagrapi uses)
     try:
-        cl2.login(settings.INSTAGRAM_USERNAME, settings.INSTAGRAM_PASSWORD)
-        _save_and_report(cl2)
-        sys.exit(0)
-    except (ChallengeUnknownStep, ChallengeRequired):
-        pass  # Still waiting for app approval
-    except LoginRequired as e:
-        print(f"Login rejected (bad credentials?): {e}")
-        sys.exit(1)
+        r2 = httpx.get("https://i.instagram.com/api/v1/accounts/login/",
+            headers={"User-Agent": "Instagram 269.0.0.18.75 Android"},
+            timeout=10, follow_redirects=True)
+        print(f"  i.instagram.com (mobile API): HTTP {r2.status_code}")
+        mobile_ok = r2.status_code in (200, 400, 405)
     except Exception as e:
-        print(f"Unexpected error: {type(e).__name__}: {e}")
+        print(f"  i.instagram.com (mobile API): ERROR {e}")
+        mobile_ok = False
 
-    time.sleep(RETRY_INTERVAL)
+    if web_ok and not mobile_ok:
+        print(f"\n  DIAGNOSIS: Instagram web is accessible but mobile API is blocked.")
+        print(f"  The instagrapi library uses the mobile API — it won't work from this IP.")
+        print(get_session_id_instructions())
 
-# ── Step 3: timed out ─────────────────────────────────────────────────────────
-print()
-print("=" * 62)
-print("TIMED OUT — App approval not detected within 2 minutes.")
-print("=" * 62)
-print()
-print("Please try again:")
-print("  1. Open Instagram app → Settings → Security → Login Activity.")
-print("  2. Approve the most recent 'Android' login entry.")
-print("  3. Re-run this script immediately after approving.")
-print()
-print("If you do not have the Instagram app installed:")
-print("  • Install Instagram on your phone and log in as @mbasuccessdesk.")
-print("  • Then re-run this script.")
-sys.exit(1)
+    # 3. Provider init
+    print(f"\n[3] Provider initialization")
+    try:
+        from app.ml.discovery.instagram_provider import InstagramProvider
+        p = InstagramProvider()
+        print(f"  OK: InstagramProvider initialized")
+
+        # 4. Health check
+        print(f"\n[4] Health check")
+        health = await p.health_check()
+        icon = "OK" if health["ok"] else "FAIL"
+        print(f"  {icon}: {health['detail']}")
+
+        if health["ok"]:
+            # 5. User discovery
+            print(f"\n[5] User discovery (hashtags: interior, homedecor)")
+            users = await p.discover_users(
+                keywords=["interior design", "home decor", "luxury sofa"],
+                target_city="Chennai",
+                max_users=5,
+                search_config={},
+            )
+            print(f"  Discovered: {len(users)} users")
+            for u in users[:3]:
+                print(f"    @{u.username} | followers={u.follower_count}")
+                if u.bio:
+                    print(f"    bio: {u.bio[:80]}")
+
+            if users:
+                print(f"\n[6] Content collection for @{users[0].username}")
+                items = await p.collect_content(users[0], max_items=5)
+                print(f"  Collected: {len(items)} items")
+                for it in items[:3]:
+                    print(f"    [{it.content_type}] {repr(it.content_text[:80])}")
+
+    except RuntimeError as e:
+        err = str(e)
+        if "blacklist" in err.lower() or "ip" in err.lower():
+            print(f"  IP BLOCKED: {err}")
+            print(get_session_id_instructions())
+        else:
+            print(f"  ERROR: {err}")
+    except Exception as e:
+        print(f"  ERROR ({type(e).__name__}): {e}")
+
+    print("\n" + "=" * 60)
+    print("TROUBLESHOOTING GUIDE")
+    print("=" * 60)
+    print("""
+  'IP blacklisted':
+    → Your server's IP is banned by Instagram's mobile API
+    → Deploy to Railway (recommended) or use a VPN
+    → OR set INSTAGRAM_SESSION_ID from your phone browser
+
+  'LoginRequired':
+    → Session file is stale or browser-derived
+    → Delete instagram_session.json and run again
+    → OR set INSTAGRAM_SESSION_ID
+
+  'ChallengeRequired':
+    → Instagram wants verification (suspicious login from new IP)
+    → Log in manually on Instagram app, approve the login
+    → OR use a different dedicated account
+""")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

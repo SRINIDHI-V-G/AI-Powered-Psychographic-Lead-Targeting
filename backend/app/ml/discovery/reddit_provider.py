@@ -1,36 +1,33 @@
 """
 RedditProvider — discovers users from public Reddit content.
 
-Authentication: Application-Only OAuth (client credentials grant).
-  - No end-user Reddit login required.
-  - No customer data accessed.
-  - Read-only access to all public subreddits.
+Authentication: NONE — uses Reddit's public JSON API.
+  No CLIENT_ID, CLIENT_SECRET, or OAuth required.
+  Only a proper User-Agent header is needed.
 
-Credentials required (set in .env):
-  REDDIT_CLIENT_ID     — from reddit.com/prefs/apps (the short string under app name)
-  REDDIT_CLIENT_SECRET — from reddit.com/prefs/apps (the "secret" field)
-  REDDIT_USER_AGENT    — e.g. "python:PsychographicLeads:1.0 (by u/Own_Green4956)"
+Public endpoints used:
+  https://www.reddit.com/r/{sub}/search.json?q={kw}&restrict_sr=1&sort=relevance
+  https://www.reddit.com/r/{sub}/new.json
+  https://www.reddit.com/r/{sub}/top.json?t=month
+  https://www.reddit.com/user/{username}/about.json
+  https://www.reddit.com/user/{username}/submitted.json
+  https://www.reddit.com/user/{username}/comments.json
 
-  Registration takes ~90 seconds:
-    1. reddit.com/prefs/apps → "create another app"
-    2. type: script, redirect uri: http://localhost:8080
-    3. Copy client_id (under app name) and secret.
+Environment variables:
+  REDDIT_USER_AGENT  — e.g. "python:PsychographicLeads:1.0 (by u/username)"
+  REDDIT_USERNAME    — optional, for future authenticated features
+  REDDIT_PASSWORD    — optional, for future authenticated features
 
-  USERNAME and PASSWORD are NOT required — Application-Only OAuth uses
-  client credentials only, not a user account login.
-
-Rate limit: PRAW enforces Reddit's 60 req/min limit automatically.
+Rate limit: ~1 req/sec safe baseline (Reddit unofficial limit for public API).
 Content per user: settings.DISCOVERY_CONTENT_PER_USER (default 15).
-  Rationale: OCEAN prompt uses 8 items; NLP benefits level off after 15.
-
-post_count: NOT populated for Reddit users.
-  Reddit's API exposes karma totals, not actual post counts.
-  follower_count = link_karma + comment_karma (engagement proxy).
 """
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
+
+import httpx
 
 from app.config import settings
 from app.ml.discovery.base import BaseDiscoveryProvider, ContentItem, RawDiscoveredUser
@@ -38,14 +35,11 @@ from app.ml.discovery.subreddit_map import get_city_subreddits, get_subreddits_f
 
 logger = logging.getLogger(__name__)
 
-# Subreddits that are private, banned, or redirect and should be skipped.
-# PRAW raises prawcore.exceptions.Redirect or .NotFound for these.
-_SKIP_SUBREDDIT_ERRORS = (
-    "prawcore.exceptions.NotFound",
-    "prawcore.exceptions.Forbidden",
-    "prawcore.exceptions.Redirect",
-    "prawcore.exceptions.BadRequest",
-)
+# Reddit base URL for public JSON API
+_BASE = "https://www.reddit.com"
+
+# Authors to always skip — bots and deleted accounts
+_SKIP_AUTHORS = frozenset({"[deleted]", "AutoModerator", "reddit"})
 
 
 def _infer_location(
@@ -55,41 +49,31 @@ def _infer_location(
 ) -> tuple[str | None, str]:
     """
     Returns (location_text, confidence_level).
-
-    Confidence levels:
-      confirmed — city appears explicitly in bio
-      inferred  — found via a city-specific subreddit
-      regional  — country-level signal only
-      unknown   — no geographic signal
+    confirmed — city in bio · inferred — city subreddit · regional — India signal · unknown
     """
     bio_lower = (bio or "").lower()
     sub_lower = subreddit_name.lower()
     city_lower = (target_city or "").lower()
 
-    # Confirmed: city explicitly in bio
     if city_lower and city_lower in bio_lower:
         return target_city, "confirmed"
 
-    # Also check common city abbreviations
     _CITY_ALIASES: dict[str, list[str]] = {
-        "chennai": ["madras", "tamil nadu", "tn", "chn"],
+        "chennai":   ["madras", "tamil nadu", "tn", "chn"],
         "bangalore": ["bengaluru", "blr", "karnataka"],
-        "mumbai": ["bombay", "maharashtra", "mum"],
-        "delhi": ["new delhi", "ncr", "delhincr"],
+        "mumbai":    ["bombay", "maharashtra", "mum"],
+        "delhi":     ["new delhi", "ncr", "delhincr"],
         "hyderabad": ["hyd", "telangana"],
-        "kolkata": ["calcutta", "wb", "west bengal"],
+        "kolkata":   ["calcutta", "wb", "west bengal"],
     }
-    aliases = _CITY_ALIASES.get(city_lower, [])
-    if any(alias in bio_lower for alias in aliases):
-        return target_city, "confirmed"
+    for alias in _CITY_ALIASES.get(city_lower, []):
+        if alias in bio_lower:
+            return target_city, "confirmed"
 
-    # Inferred: city-specific subreddit
     if city_lower and (city_lower in sub_lower or sub_lower in city_lower):
         return target_city, "inferred"
 
-    # Regional: India-level signals
-    india_signals = ["india", "indian", "r/india", "desi"]
-    if any(sig in bio_lower for sig in india_signals):
+    if any(sig in bio_lower for sig in ["india", "indian", "r/india", "desi"]):
         return "India", "regional"
 
     return None, "unknown"
@@ -97,34 +81,24 @@ def _infer_location(
 
 class RedditProvider(BaseDiscoveryProvider):
     """
-    Discovers users from public Reddit content using PRAW.
-    Uses Application-Only OAuth — no user login required.
-
-    Instantiation raises CredentialError if credentials are not configured.
-    The orchestrator checks settings.use_mock_discovery() before instantiating.
+    Discovers users from public Reddit content using raw httpx JSON requests.
+    Requires ZERO OAuth credentials — public JSON API only.
     """
 
     def __init__(self) -> None:
-        if not settings.reddit_credentials_configured():
-            raise RuntimeError(
-                "Reddit credentials are not configured. "
-                "Set REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, and REDDIT_USER_AGENT "
-                "in your .env file. See backend/CREDENTIALS_REQUIRED.md."
-            )
-        try:
-            import praw  # type: ignore[import]
-        except ImportError as exc:
-            raise RuntimeError("praw is not installed. Run: pip install praw==7.7.1") from exc
+        user_agent = settings.REDDIT_USER_AGENT or "python:PsychographicLeads:1.0"
+        self._client = httpx.Client(
+            headers={"User-Agent": user_agent},
+            timeout=15.0,
+            follow_redirects=True,
+        )
+        logger.info("RedditProvider initialised (public JSON API, no OAuth)")
 
-        self._reddit = praw.Reddit(
-            client_id=settings.REDDIT_CLIENT_ID,
-            client_secret=settings.REDDIT_CLIENT_SECRET,
-            user_agent=settings.REDDIT_USER_AGENT,
-        )
-        logger.info(
-            "RedditProvider initialised (read-only, client_id=%s...)",
-            settings.REDDIT_CLIENT_ID[:6],
-        )
+    def __del__(self) -> None:
+        try:
+            self._client.close()
+        except Exception:
+            pass
 
     @property
     def name(self) -> str:
@@ -134,29 +108,51 @@ class RedditProvider(BaseDiscoveryProvider):
     def platform(self) -> str:
         return "reddit"
 
+    # ── Public API helpers ────────────────────────────────────────────────────
+
+    def _get_json(self, path: str, params: dict | None = None, retries: int = 2) -> dict:
+        """GET a Reddit JSON endpoint. Handles 429 rate-limit with backoff."""
+        url = f"{_BASE}{path}" if path.startswith("/") else path
+        for attempt in range(retries + 1):
+            try:
+                resp = self._client.get(url, params=params)
+                if resp.status_code == 429:
+                    wait = 10 * (attempt + 1)
+                    logger.warning("Reddit rate-limited (429) — sleeping %ds", wait)
+                    time.sleep(wait)
+                    continue
+                if resp.status_code in (403, 404):
+                    return {}  # private/banned/missing — caller handles
+                resp.raise_for_status()
+                return resp.json()
+            except httpx.TimeoutException:
+                if attempt < retries:
+                    time.sleep(3)
+                    continue
+                return {}
+            except Exception as exc:
+                logger.debug("Reddit GET %s failed: %s", path, exc)
+                return {}
+        return {}
+
+    # ── Discovery ─────────────────────────────────────────────────────────────
+
     async def health_check(self) -> dict:
+        import asyncio
+        loop = asyncio.get_running_loop()
         try:
-            import asyncio
-            loop = asyncio.get_running_loop()
-            # Make a real, cheap API request to verify the credentials actually work.
-            # Fetching a subreddit title is the lightest possible Reddit API call.
-            # self._reddit.auth.limits only reads an in-memory dict and does NOT
-            # contact Reddit, so it would return "ok" even with wrong credentials.
-            title = await loop.run_in_executor(
-                None,
-                lambda: self._reddit.subreddit("redditdev").title,
-            )
-            return {
-                "ok": True,
-                "provider": self.name,
-                "detail": f"Reddit API verified via r/redditdev (title={title!r})",
-            }
+            result = await loop.run_in_executor(None, self._health_check_sync)
+            return result
         except Exception as exc:
-            return {
-                "ok": False,
-                "provider": self.name,
-                "detail": str(exc),
-            }
+            return {"ok": False, "provider": self.name, "detail": str(exc)}
+
+    def _health_check_sync(self) -> dict:
+        data = self._get_json("/r/redditdev/new.json", params={"limit": 1})
+        children = data.get("data", {}).get("children", [])
+        if children:
+            title = children[0].get("data", {}).get("title", "")
+            return {"ok": True, "provider": self.name, "detail": f"Public JSON API reachable (r/redditdev post: {title[:50]!r})"}
+        return {"ok": False, "provider": self.name, "detail": "No posts returned from r/redditdev"}
 
     async def discover_users(
         self,
@@ -165,33 +161,20 @@ class RedditProvider(BaseDiscoveryProvider):
         max_users: int,
         search_config: dict,
     ) -> list[RawDiscoveredUser]:
-        """
-        Step A: filter + map keywords → subreddits.
-        Step B: search each subreddit with each keyword → extract post authors.
-        Step C: fetch author profiles.
-        Step D: infer location confidence.
-        Step E: deduplicate and return.
-        """
         import asyncio
+        loop = asyncio.get_running_loop()
 
-        # Filter out empty/whitespace-only keywords before any API calls.
-        # Empty strings passed to subreddit.search() return arbitrary top posts,
-        # not topic-relevant content, and waste rate-limit quota.
         clean_keywords = [kw for kw in keywords if kw and kw.strip()]
         if not clean_keywords:
-            logger.warning("RedditProvider: no valid keywords after filtering — returning empty")
+            logger.warning("RedditProvider: no valid keywords — returning empty")
             return []
 
-        # A: Get relevant subreddits
         topic_subs = get_subreddits_for_keywords(clean_keywords, max_subreddits=8)
-        city_subs = get_city_subreddits(target_city)
-        all_subs = list(dict.fromkeys(topic_subs + city_subs))  # ordered dedup
+        city_subs  = get_city_subreddits(target_city)
+        all_subs   = list(dict.fromkeys(topic_subs + city_subs))
 
         if not all_subs:
-            logger.warning(
-                "RedditProvider: no subreddits found for keywords=%s — returning empty",
-                clean_keywords[:6],
-            )
+            logger.warning("RedditProvider: no subreddits for keywords=%s", clean_keywords[:4])
             return []
 
         logger.info(
@@ -199,145 +182,191 @@ class RedditProvider(BaseDiscoveryProvider):
             all_subs[:6], clean_keywords[:4], max_users,
         )
 
-        seen_usernames: set[str] = set()
-        result: list[RawDiscoveredUser] = []
-        loop = asyncio.get_running_loop()
-
-        # Interleave keywords so each subreddit sees a varied sample.
-        # E.g. for 30 keywords and 10 subreddits, sub[0] gets kw[0,10,20],
-        # sub[1] gets kw[1,11,21] — ensuring LLM-generated keywords are used,
-        # not just the first 3 product-level keywords.
-        MAX_KW_PER_SUB = 3
-        n_subs = len(all_subs)
-
-        for sub_idx, sub_name in enumerate(all_subs):
-            if len(result) >= max_users:
-                break
-            # Pick keywords at stride intervals so coverage is spread evenly
-            sub_keywords = [
-                clean_keywords[i]
-                for i in range(sub_idx, len(clean_keywords), max(n_subs, 1))
-            ][:MAX_KW_PER_SUB] or clean_keywords[:MAX_KW_PER_SUB]
-
-            for kw in sub_keywords:
-                if len(result) >= max_users:
-                    break
-                try:
-                    users_from_search = await loop.run_in_executor(
-                        None,
-                        self._search_subreddit,
-                        sub_name, kw, min(50, max_users - len(result)),
-                    )
-                    for raw_user in users_from_search:
-                        uname = raw_user.username
-                        if uname in seen_usernames:
-                            continue
-                        seen_usernames.add(uname)
-
-                        # Infer location
-                        location, conf = _infer_location(
-                            raw_user.bio or "", sub_name, target_city
-                        )
-                        raw_user.location = location
-                        raw_user.location_confidence = conf
-
-                        result.append(raw_user)
-                        if len(result) >= max_users:
-                            break
-
-                except Exception as exc:
-                    exc_type = type(exc).__qualname__
-                    # Log as debug for expected subreddit-level errors (private, banned, redirect)
-                    if any(skip in exc_type for skip in ("NotFound", "Forbidden", "Redirect")):
-                        logger.debug(
-                            "RedditProvider: r/%s skipped (%s)", sub_name, exc_type
-                        )
-                    else:
-                        logger.warning(
-                            "RedditProvider: error searching r/%s for %r: %s",
-                            sub_name, kw, exc,
-                        )
-                    continue
-
+        result = await loop.run_in_executor(
+            None, self._discover_sync,
+            all_subs, clean_keywords, target_city, max_users,
+        )
         logger.info("RedditProvider: discovered %d users", len(result))
         return result
 
-    def _search_subreddit(
+    def _discover_sync(
+        self,
+        all_subs: list[str],
+        keywords: list[str],
+        target_city: str | None,
+        max_users: int,
+    ) -> list[RawDiscoveredUser]:
+        """
+        Two-pass discovery:
+          Pass 1 — collect unique author usernames from subreddit searches (fast, no profile fetches)
+          Pass 2 — fetch full profiles via /user/{u}/about.json (one call per unique user)
+        """
+        # Pass 1: Collect unique (username → subreddit) pairs
+        author_map: dict[str, str] = {}   # username → first subreddit where found
+        n_subs = len(all_subs)
+        MAX_KW_PER_SUB = 3
+
+        for sub_idx, sub_name in enumerate(all_subs):
+            if len(author_map) >= max_users * 3:
+                break
+            sub_keywords = [
+                keywords[i]
+                for i in range(sub_idx, len(keywords), max(n_subs, 1))
+            ][:MAX_KW_PER_SUB] or keywords[:MAX_KW_PER_SUB]
+
+            for kw in sub_keywords:
+                new_authors = self._get_authors_from_subreddit(
+                    sub_name, kw, limit=50
+                )
+                for uname in new_authors:
+                    if uname not in author_map:
+                        author_map[uname] = sub_name
+                time.sleep(0.5)  # polite inter-request delay
+
+        logger.info("RedditProvider: %d unique authors found across subreddits", len(author_map))
+
+        # Pass 2: Fetch profiles and build RawDiscoveredUser objects
+        result: list[RawDiscoveredUser] = []
+        candidates = list(author_map.items())[:max_users * 2]
+
+        for username, sub_name in candidates:
+            if len(result) >= max_users:
+                break
+            time.sleep(0.4)
+            profile = self._fetch_user_profile(username, sub_name)
+            if not profile:
+                continue
+            location, conf = _infer_location(profile.bio or "", sub_name, target_city)
+            profile.location = location
+            profile.location_confidence = conf
+            result.append(profile)
+
+        return result
+
+    def _get_authors_from_subreddit(
         self,
         sub_name: str,
         keyword: str,
         limit: int,
-    ) -> list[RawDiscoveredUser]:
+    ) -> list[str]:
         """
-        Synchronous: searches a subreddit and extracts unique post authors.
-        Runs in a thread pool executor to avoid blocking the event loop.
+        Return unique author usernames from subreddit search + /new.json.
+        No profile fetches — just usernames from post metadata.
         """
-        users: list[RawDiscoveredUser] = []
-        try:
-            subreddit = self._reddit.subreddit(sub_name)
-            for submission in subreddit.search(keyword, limit=limit, sort="relevance"):
-                author = submission.author
-                if not author:
-                    continue
-                try:
-                    # Accessing .id forces PRAW to fetch the full Redditor object.
-                    # Skip suspended, deleted, or inaccessible accounts.
-                    _ = author.id
-                    if getattr(author, "is_suspended", False):
-                        continue
-                    bio_text = ""
-                    try:
-                        sub_info = getattr(author, "subreddit", {})
-                        bio_text = (sub_info or {}).get("public_description", "") or ""
-                    except Exception:
-                        bio_text = ""
+        authors: list[str] = []
+        seen: set[str] = set()
 
-                    users.append(RawDiscoveredUser(
-                        platform="reddit",
-                        source_provider="reddit",
-                        platform_user_id=str(author.id),
-                        username=str(author.name),
-                        display_name=str(author.name),
-                        bio=bio_text or None,
-                        follower_count=(
-                            getattr(author, "link_karma", 0) +
-                            getattr(author, "comment_karma", 0)
-                        ),
-                        post_count=None,  # Not reliably available from Reddit API
-                        profile_url=f"https://reddit.com/u/{author.name}",
-                        discovered_via=sub_name,
-                        raw_profile={
-                            "link_karma":    getattr(author, "link_karma", 0),
-                            "comment_karma": getattr(author, "comment_karma", 0),
-                            "account_age_days": max(
-                                0,
-                                int(
-                                    (__import__("time").time() -
-                                     getattr(author, "created_utc", 0)) / 86400
-                                ),
-                            ),
-                            "subreddit": sub_name,
-                        },
-                    ))
-                except Exception as exc:
-                    logger.debug("Could not extract profile for %s: %s", author, exc)
+        def _extract_authors(children: list) -> None:
+            for child in children:
+                post = child.get("data", {})
+                author = post.get("author", "")
+                if not author or author in _SKIP_AUTHORS or author in seen:
                     continue
+                seen.add(author)
+                authors.append(author)
+
+        # 1. Keyword search (most relevant)
+        try:
+            data = self._get_json(
+                f"/r/{sub_name}/search.json",
+                params={
+                    "q": keyword,
+                    "restrict_sr": "1",
+                    "sort": "relevance",
+                    "limit": min(limit, 50),
+                },
+            )
+            _extract_authors(data.get("data", {}).get("children", []))
         except Exception as exc:
-            logger.warning("Error searching r/%s: %s", sub_name, exc)
-        return users
+            logger.debug("r/%s search for %r failed: %s", sub_name, keyword, exc)
+
+        # 2. Supplement with /new.json if search was sparse
+        if len(authors) < limit // 3:
+            try:
+                data = self._get_json(
+                    f"/r/{sub_name}/new.json",
+                    params={"limit": min(limit, 50)},
+                )
+                _extract_authors(data.get("data", {}).get("children", []))
+            except Exception as exc:
+                logger.debug("r/%s /new.json failed: %s", sub_name, exc)
+
+        # 3. /top.json as final supplement
+        if len(authors) < limit // 4:
+            try:
+                data = self._get_json(
+                    f"/r/{sub_name}/top.json",
+                    params={"limit": min(limit, 50), "t": "month"},
+                )
+                _extract_authors(data.get("data", {}).get("children", []))
+            except Exception as exc:
+                logger.debug("r/%s /top.json failed: %s", sub_name, exc)
+
+        return authors[:limit]
+
+    def _fetch_user_profile(
+        self,
+        username: str,
+        discovered_via: str,
+    ) -> RawDiscoveredUser | None:
+        """
+        Fetch public user profile from /user/{username}/about.json.
+        Returns None for suspended, deleted, or inaccessible accounts.
+        """
+        data = self._get_json(f"/user/{username}/about.json")
+        if not data:
+            return None
+
+        kind = data.get("kind", "")
+        if kind == "t2":
+            udata = data.get("data", {})
+        elif "data" in data:
+            udata = data["data"]
+        else:
+            return None
+
+        # Skip suspended or banned users
+        if udata.get("is_suspended", False) or udata.get("is_blocked", False):
+            return None
+
+        name = udata.get("name", username)
+        bio = ""
+        subreddit_info = udata.get("subreddit") or {}
+        if isinstance(subreddit_info, dict):
+            bio = subreddit_info.get("public_description", "") or ""
+
+        link_karma    = udata.get("link_karma", 0) or 0
+        comment_karma = udata.get("comment_karma", 0) or 0
+
+        return RawDiscoveredUser(
+            platform="reddit",
+            source_provider="reddit",
+            platform_user_id=udata.get("id", username),
+            username=name,
+            display_name=name,
+            bio=bio.strip() or None,
+            follower_count=link_karma + comment_karma,
+            post_count=None,  # Reddit API exposes karma, not post count
+            profile_url=f"https://reddit.com/u/{name}",
+            discovered_via=discovered_via,
+            raw_profile={
+                "link_karma":    link_karma,
+                "comment_karma": comment_karma,
+                "account_age_days": max(
+                    0,
+                    int((time.time() - (udata.get("created_utc") or time.time())) / 86400),
+                ),
+                "subreddit": discovered_via,
+            },
+        )
+
+    # ── Content collection ────────────────────────────────────────────────────
 
     async def collect_content(
         self,
         user: RawDiscoveredUser,
         max_items: int,
     ) -> list[ContentItem]:
-        """
-        Fetch recent public posts and comments for a Reddit user.
-        Bio is included as content_type='bio' if available.
-
-        OCEAN prompt uses max 8 items; NLP benefits plateau at ~15 items.
-        max_items default = settings.DISCOVERY_CONTENT_PER_USER (15).
-        """
         import asyncio
         loop = asyncio.get_running_loop()
         items: list[ContentItem] = []
@@ -356,61 +385,77 @@ class RedditProvider(BaseDiscoveryProvider):
             return items
 
         try:
-            raw_items = await loop.run_in_executor(
-                None, self._fetch_user_content, user.username, needed
+            raw = await loop.run_in_executor(
+                None, self._fetch_user_content, user.username, needed,
             )
-            items.extend(raw_items)
+            items.extend(raw)
         except Exception as exc:
-            logger.warning("collect_content failed for %s: %s", user.username, exc)
+            logger.warning("collect_content failed for u/%s: %s", user.username, exc)
 
         return items[:max_items]
 
     def _fetch_user_content(self, username: str, limit: int) -> list[ContentItem]:
-        """Synchronous: fetch recent posts/comments for a Reddit user."""
+        """
+        Fetch recent posts + comments via:
+          /user/{u}/submitted.json
+          /user/{u}/comments.json
+        """
         items: list[ContentItem] = []
-        try:
-            redditor = self._reddit.redditor(username)
-            # Fetch a mix of posts and comments
-            for item in redditor.new(limit=limit):
-                try:
-                    # Submission (post) vs Comment
-                    if hasattr(item, "title"):
-                        text = f"{item.title} {item.selftext or ''}".strip()
-                        ctype = "post"
-                        url = f"https://reddit.com{item.permalink}"
-                        score = item.score
-                    else:
-                        text = item.body or ""
-                        ctype = "comment"
-                        url = f"https://reddit.com{item.permalink}"
-                        score = item.score
 
-                    if not text or text == "[deleted]" or text == "[removed]":
-                        continue
+        # Posts (submissions)
+        data = self._get_json(
+            f"/user/{username}/submitted.json",
+            params={"limit": min(limit, 25)},
+        )
+        for child in data.get("data", {}).get("children", []):
+            post = child.get("data", {})
+            title   = post.get("title", "") or ""
+            body    = post.get("selftext", "") or ""
+            text    = f"{title} {body}".strip()
+            if not text or text in ("[deleted]", "[removed]"):
+                continue
 
-                    # Trim very long text — OCEAN prompt truncates to 300 chars anyway,
-                    # but we store full text for NLP (Empath/BERTopic need more context)
-                    text = text[:2000]
+            posted: datetime | None = None
+            try:
+                if ts := post.get("created_utc"):
+                    posted = datetime.fromtimestamp(float(ts), tz=timezone.utc)
+            except Exception:
+                pass
 
-                    posted = None
-                    try:
-                        if hasattr(item, "created_utc"):
-                            posted = datetime.fromtimestamp(
-                                item.created_utc, tz=timezone.utc
-                            )
-                    except Exception:
-                        pass
+            items.append(ContentItem(
+                content_type="post",
+                content_text=text[:2000],
+                source_url=f"https://reddit.com{post.get('permalink', '')}",
+                engagement=post.get("score", 0) or 0,
+                posted_at=posted,
+            ))
 
-                    items.append(ContentItem(
-                        content_type=ctype,
-                        content_text=text,
-                        source_url=url,
-                        engagement=score,
-                        posted_at=posted,
-                    ))
-                except Exception as exc:
-                    logger.debug("Error processing content item: %s", exc)
+        # Comments
+        if len(items) < limit:
+            time.sleep(0.3)
+            data = self._get_json(
+                f"/user/{username}/comments.json",
+                params={"limit": min(limit - len(items), 25)},
+            )
+            for child in data.get("data", {}).get("children", []):
+                comment = child.get("data", {})
+                text = (comment.get("body") or "").strip()
+                if not text or text in ("[deleted]", "[removed]"):
                     continue
-        except Exception as exc:
-            logger.warning("Could not fetch content for %s: %s", username, exc)
+
+                posted = None
+                try:
+                    if ts := comment.get("created_utc"):
+                        posted = datetime.fromtimestamp(float(ts), tz=timezone.utc)
+                except Exception:
+                    pass
+
+                items.append(ContentItem(
+                    content_type="comment",
+                    content_text=text[:2000],
+                    source_url=f"https://reddit.com{comment.get('permalink', '')}",
+                    engagement=comment.get("score", 0) or 0,
+                    posted_at=posted,
+                ))
+
         return items

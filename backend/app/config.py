@@ -28,11 +28,14 @@ class Settings(BaseSettings):
     FALLBACK_TO_MOCK_ON_ERROR: bool = False
 
     # ── Reddit Discovery ──────────────────────────────────────────────────────
-    # Obtain credentials at https://reddit.com/prefs/apps (type: script).
-    # Leave blank to fall back to MockDiscoveryProvider automatically.
+    # Uses the public JSON API — no OAuth required.
+    # CLIENT_ID and CLIENT_SECRET are kept for backward compatibility but ignored.
     REDDIT_CLIENT_ID: str = ""
     REDDIT_CLIENT_SECRET: str = ""
     REDDIT_USER_AGENT: str = "python:PsychographicLeads:1.0 (by u/project_owner)"
+    # Optional: Reddit username/password for authenticated features (future Playwright login).
+    REDDIT_USERNAME: str = ""
+    REDDIT_PASSWORD: str = ""
 
     # ── YouTube Discovery ─────────────────────────────────────────────────────
     # Obtain a key at https://console.cloud.google.com → enable YouTube Data API v3.
@@ -111,13 +114,11 @@ class Settings(BaseSettings):
     # ── Derived helpers ───────────────────────────────────────────────────────
 
     def reddit_credentials_configured(self) -> bool:
-        # All three fields are mandatory for Application-Only OAuth.
-        # USER_AGENT is checked because Reddit rejects "python-requests" (PRAW default).
+        # Public JSON API requires only a proper User-Agent.
+        # CLIENT_ID and CLIENT_SECRET are NOT required.
         return bool(
-            self.REDDIT_CLIENT_ID
-            and self.REDDIT_CLIENT_SECRET
-            and self.REDDIT_USER_AGENT
-            and "project_owner" not in self.REDDIT_USER_AGENT  # reject unconfigured default
+            self.REDDIT_USER_AGENT
+            and "project_owner" not in self.REDDIT_USER_AGENT
         )
 
     def youtube_credentials_configured(self) -> bool:
@@ -203,12 +204,12 @@ def warn_missing_credentials() -> None:
     # ── Discovery credentials ────────────────────────────────────────────────
     if not settings.reddit_credentials_configured():
         logger.warning(
-            "⚠️  Reddit credentials not configured. "
-            "Discovery will use MockDiscoveryProvider. "
-            "Set REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, REDDIT_USER_AGENT in .env."
+            "⚠️  Reddit User-Agent not configured. "
+            "Set REDDIT_USER_AGENT in .env (e.g. 'python:App:1.0 (by u/username)'). "
+            "No CLIENT_ID or CLIENT_SECRET needed — public JSON API is credential-free."
         )
     else:
-        logger.info("✓ Reddit credentials configured (client_id=%s...)", settings.REDDIT_CLIENT_ID[:6])
+        logger.info("✓ Reddit public JSON API ready (User-Agent set, no OAuth needed)")
 
     if not settings.youtube_credentials_configured():
         logger.warning(
