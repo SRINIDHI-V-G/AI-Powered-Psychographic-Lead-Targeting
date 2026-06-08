@@ -2,7 +2,7 @@ import apiClient from './client';
 import type { Product, ProductStatusResponse, ProductCreateInput } from '../types/api';
 
 export async function getProducts(): Promise<Product[]> {
-  const { data } = await apiClient.get<Product[]>('/products');
+  const { data } = await apiClient.get<Product[]>('/products/');
   return data;
 }
 
@@ -17,7 +17,7 @@ export async function getProductStatus(id: string): Promise<ProductStatusRespons
 }
 
 export async function createProduct(input: ProductCreateInput): Promise<Product> {
-  const { data } = await apiClient.post<Product>('/products', input);
+  const { data } = await apiClient.post<Product>('/products/', input);
   return data;
 }
 

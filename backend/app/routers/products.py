@@ -15,6 +15,13 @@ router = APIRouter(prefix="/products", tags=["Products"])
 
 
 @router.post(
+    "",
+    response_model=ProductResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Submit a new product (no trailing slash)",
+    include_in_schema=False,
+)
+@router.post(
     "/",
     response_model=ProductResponse,
     status_code=status.HTTP_201_CREATED,
@@ -37,6 +44,12 @@ async def submit_product(
     return product
 
 
+@router.get(
+    "",
+    response_model=list[ProductResponse],
+    summary="List all products for this company (no trailing slash)",
+    include_in_schema=False,
+)
 @router.get(
     "/",
     response_model=list[ProductResponse],
