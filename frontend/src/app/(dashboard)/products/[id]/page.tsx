@@ -1,6 +1,6 @@
 'use client';
 
-import { useProduct, useProductStatus } from '@/lib/hooks/useProducts';
+import { useProduct, useProductStatus, useRestartProduct } from '@/lib/hooks/useProducts';
 import { useMatchStatus } from '@/lib/hooks/useLeads';
 import { useLeadsAnalytics } from '@/lib/hooks/useAnalytics';
 import { useDiscoveryJobs } from '@/lib/hooks/useDiscovery';
@@ -11,6 +11,8 @@ import { DonutChart } from '@/components/charts/DonutChart';
 import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import { ErrorState } from '@/components/shared/ErrorState';
 import { getProviderColor } from '@/lib/providerColors';
+import { RotateCcw } from 'lucide-react';
+import { toast } from 'sonner';
 
 export default function ProductOverviewPage({ params }: { params: { id: string } }) {
   const { id } = params;
@@ -22,6 +24,16 @@ export default function ProductOverviewPage({ params }: { params: { id: string }
   const { data: motivations } = useMotivations(id);
   const { data: analytics } = useLeadsAnalytics(id);
   const { data: leadsData } = useLeads(id, { page_size: 1, sort: 'top' });
+  const { mutateAsync: restart, isPending: restarting } = useRestartProduct(id);
+
+  const handleRestart = async () => {
+    try {
+      await restart();
+      toast.success('Pipeline restarted — check back in a few minutes');
+    } catch {
+      toast.error('Failed to restart pipeline');
+    }
+  };
 
   if (isLoading) return (
     <div className="flex items-center justify-center h-64">
@@ -110,21 +122,33 @@ export default function ProductOverviewPage({ params }: { params: { id: string }
             {product.category ? ` · ${product.category}` : ''}
           </p>
         </div>
-        <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold ${
-          isPipelineComplete
-            ? 'bg-green-50 text-green-700 border border-green-200'
-            : currentStatus.status === 'failed'
-            ? 'bg-red-50 text-red-700 border border-red-200'
-            : 'bg-amber-50 text-amber-700 border border-amber-200'
-        }`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${
-            isPipelineComplete ? 'bg-green-500'
-            : currentStatus.status === 'failed' ? 'bg-red-500'
-            : 'bg-amber-400'
-          }`} />
-          {isPipelineComplete
-            ? 'Pipeline Complete'
-            : currentStatus.status.replace(/_/g, ' ')}
+        <div className="flex items-center gap-2">
+          {currentStatus.status === 'failed' && (
+            <button
+              onClick={handleRestart}
+              disabled={restarting}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-xs font-semibold rounded-lg hover:bg-indigo-700 transition disabled:opacity-60"
+            >
+              <RotateCcw size={13} className={restarting ? 'animate-spin' : ''} />
+              Restart Pipeline
+            </button>
+          )}
+          <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold ${
+            isPipelineComplete
+              ? 'bg-green-50 text-green-700 border border-green-200'
+              : currentStatus.status === 'failed'
+              ? 'bg-red-50 text-red-700 border border-red-200'
+              : 'bg-amber-50 text-amber-700 border border-amber-200'
+          }`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${
+              isPipelineComplete ? 'bg-green-500'
+              : currentStatus.status === 'failed' ? 'bg-red-500'
+              : 'bg-amber-400'
+            }`} />
+            {isPipelineComplete
+              ? 'Pipeline Complete'
+              : currentStatus.status.replace(/_/g, ' ')}
+          </div>
         </div>
       </div>
 
