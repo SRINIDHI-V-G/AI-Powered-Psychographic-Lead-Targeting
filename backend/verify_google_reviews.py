@@ -182,7 +182,7 @@ def step5_run_discovery(prod_id: str) -> str | None:
 
         for i in range(36):
             time.sleep(5)
-            j = get(f"/api/v1/products/{prod_id}/discovery/jobs/{job_id}")
+            j = get(f"/api/v1/products/{prod_id}/discovery/jobs/{job_id}", timeout=60)
             status = j.get("status", "")
             discovered = j.get("users_discovered", 0)
             content = j.get("users_content_collected", 0)
