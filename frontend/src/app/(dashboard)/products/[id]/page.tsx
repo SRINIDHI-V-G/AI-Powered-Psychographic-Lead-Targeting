@@ -3,7 +3,7 @@
 import { useProduct, useProductStatus, useRestartProduct } from '@/lib/hooks/useProducts';
 import { useMatchStatus } from '@/lib/hooks/useLeads';
 import { useLeadsAnalytics } from '@/lib/hooks/useAnalytics';
-import { useDiscoveryJobs, usePlatformStats, useStartDiscovery } from '@/lib/hooks/useDiscovery';
+import { useDiscoveryJobs, usePlatformStats, useDiscoveredUsers, useStartDiscovery } from '@/lib/hooks/useDiscovery';
 import { useOceanStatus } from '@/lib/hooks/useOceanStatus';
 import { useMotivations } from '@/lib/hooks/useMotivations';
 import { useLeads } from '@/lib/hooks/useLeads';
@@ -21,6 +21,10 @@ export default function ProductOverviewPage({ params }: { params: { id: string }
   const { data: matchStatus } = useMatchStatus(id);
   const { data: jobs } = useDiscoveryJobs(id);
   const { data: platformStats } = usePlatformStats(id);
+  // Fallback for platform breakdown: fetch actual discovered users and count client-side.
+  // Uses the existing /discovery/users endpoint — no new backend endpoint required.
+  // limit=500 covers real-world campaign sizes; platformStats takes over once backend restarts.
+  const { data: discoveredUsersPage } = useDiscoveredUsers(id, { limit: 500 });
   const { data: oceanStatus } = useOceanStatus(id);
   const { data: motivations } = useMotivations(id);
   const { data: analytics } = useLeadsAnalytics(id);
@@ -63,16 +67,43 @@ export default function ProductOverviewPage({ params }: { params: { id: string }
     .filter(j => j.status === 'completed')
     .reduce((a, j) => a + j.users_discovered, 0);
 
-  // Chart: only platforms with COUNT(*) > 0 in discovered_users table.
-  // provider_name lists attempted providers — do NOT use it; it includes
-  // providers that ran but found 0 users (e.g. Google Reviews with billing off).
-  const sourceDonut = (platformStats ?? [])
-    .filter(s => s.count > 0)
-    .map(s => ({
+  // Chart — two-tier, both use actual DiscoveredUser rows so Google Reviews
+  // (or any provider with 0 users) is automatically excluded:
+  //
+  // Tier 1 (preferred): /platform-stats aggregation endpoint — available once
+  //   the backend is restarted with the new endpoint.
+  //
+  // Tier 2 (fallback):  /discovery/users list — works with any backend version;
+  //   we count platform occurrences client-side from real DiscoveredUser records.
+  //   Never splits provider_name; only counts records that actually exist.
+  const platformStatsData = (platformStats ?? []).filter(s => s.count > 0);
+
+  let sourceDonut: { name: string; value: number; color: string }[];
+
+  if (platformStatsData.length > 0) {
+    // Tier 1: server-side aggregation (accurate, lightweight)
+    sourceDonut = platformStatsData.map(s => ({
       name: s.platform.charAt(0).toUpperCase() + s.platform.slice(1),
       value: s.count,
       color: getProviderColor(s.platform),
     }));
+  } else {
+    // Tier 2: client-side count from actual DiscoveredUser.platform values
+    const counts: Record<string, number> = {};
+    (discoveredUsersPage?.users ?? []).forEach(u => {
+      const p = u.platform.toLowerCase();
+      counts[p] = (counts[p] ?? 0) + 1;
+    });
+    sourceDonut = Object.entries(counts)
+      .filter(([, n]) => n > 0)
+      .sort((a, b) => b[1] - a[1])
+      .map(([platform, n]) => ({
+        name: platform.charAt(0).toUpperCase() + platform.slice(1),
+        value: n,
+        color: getProviderColor(platform),
+      }));
+  }
+
   const sourceLabels = sourceDonut.map(s => s.name).join(' · ');
 
   // ── Real tier counts from API ────────────────────────────────────────────────
