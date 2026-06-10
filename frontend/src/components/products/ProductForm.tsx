@@ -10,11 +10,11 @@ import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 
 const schema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters'),
-  description: z.string().min(10, 'Description must be at least 10 characters'),
+  description: z.string().min(20, 'Description must be at least 20 characters'),
   category: z.string().min(2, 'Category is required'),
   subcategory: z.string().optional(),
-  price_range: z.enum(['budget', 'standard', 'premium']),
-  target_location: z.string().optional(),
+  price_range: z.enum(['budget', 'mid_range', 'premium', 'luxury']),
+  target_location: z.string().min(1, 'Target location is required'),
   target_city: z.string().optional(),
   target_country: z.string().optional(),
   keywords_raw: z.string().optional(),
@@ -32,7 +32,7 @@ export function ProductForm() {
     formState: { errors },
   } = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: { price_range: 'standard' },
+    defaultValues: { price_range: 'mid_range' },
   });
 
   const onSubmit = async (data: FormData) => {
@@ -117,15 +117,15 @@ export function ProductForm() {
           className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
         >
           <option value="budget">Budget</option>
-          <option value="standard">Standard</option>
+          <option value="mid_range">Standard</option>
           <option value="premium">Premium</option>
+          <option value="luxury">Luxury</option>
         </select>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
-        {field('target_location', 'Target Location', 'text', 'e.g. North America')}
-        {field('target_city', 'City (optional)', 'text', 'e.g. San Francisco')}
-        {field('target_country', 'Country (optional)', 'text', 'e.g. USA')}
+      <div>
+        {field('target_location', 'Target Location', 'text', 'e.g. Chennai, India  or  Mumbai, India  or  Bangalore, India')}
+        <p className="text-xs text-slate-400 mt-1">Use "City, Country" format for precise location filtering</p>
       </div>
 
       {field(

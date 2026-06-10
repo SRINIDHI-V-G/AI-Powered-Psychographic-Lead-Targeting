@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import AsyncSessionLocal
-from app.ml.llm_client import OllamaClient
+from app.ml.llm_client import get_llm_client
 from app.ml.ocean.heuristic_scorer import (
     compute_heuristic_scores,
     compute_insufficient_content_scores,
@@ -48,8 +48,8 @@ from app.models.product import Product, ProductStatus
 logger = logging.getLogger(__name__)
 
 _BATCH_SIZE = 20
-# OCEAN LLM output needs ~1200 tokens (5 dims × score + reasoning)
-_OCEAN_NUM_PREDICT = 1200
+# 5 scores + confidence + short per-dim reasoning ≈ 200 tokens; 250 is safe headroom
+_OCEAN_NUM_PREDICT = 250
 # Minimum tokens to attempt LLM scoring
 _MIN_TOKENS = MIN_TOKENS_FOR_LLM
 
@@ -168,7 +168,7 @@ async def _score_user(
         content_samples=content_samples,
     )
 
-    client = OllamaClient()
+    client = get_llm_client()
     raw_response: str | None = None
 
     try:
@@ -177,6 +177,7 @@ async def _score_user(
             system=_OCEAN_SYSTEM_PROMPT_IMPORT(),
             temperature=0.2,
             num_predict=_OCEAN_NUM_PREDICT,
+            num_ctx=512,
         )
     except ConnectionError as exc:
         # Ollama service is not running — fall back to heuristic so pipeline
@@ -286,10 +287,21 @@ async def start_ocean_background(product_id: str) -> None:
         await db.commit()
 
         try:
+            # Warm up the LLM before the scoring loop so the model is already in
+            # VRAM when real scoring starts. Skipped for Groq (always fast).
+            from app.ml.llm_client import OllamaClient
+            _warmup_client = get_llm_client()
+            if isinstance(_warmup_client, OllamaClient):
+                try:
+                    await _warmup_client.generate("hi", "hi", num_predict=1, num_ctx=128)
+                    logger.info("%s model warm-up complete", _log)
+                except Exception as _exc:
+                    logger.warning("%s model warm-up failed (non-fatal): %s", _log, _exc)
+
             summary = await run_ocean_for_product(db, UUID(product_id))
 
             product.status = ProductStatus.ocean_scoring
-            product.pipeline_step = 6
+            product.pipeline_step = 7
             await db.commit()
 
             logger.info(
@@ -299,12 +311,12 @@ async def start_ocean_background(product_id: str) -> None:
 
             # ── Auto-trigger matching ─────────────────────────────────────────
             if summary["processed"] > 0:
-                from app.workers.dispatch import dispatch
+                from app.services.matching_service import start_matching_background
                 logger.info(
                     "%s auto-triggering matching for %d users",
                     _log, summary["processed"],
                 )
-                dispatch("matching", product_id)
+                await start_matching_background(product_id)
 
         except Exception as exc:
             tb = traceback.format_exc()

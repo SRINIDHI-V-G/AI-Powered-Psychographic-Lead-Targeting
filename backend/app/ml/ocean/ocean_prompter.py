@@ -85,10 +85,11 @@ def build_ocean_prompt(
         "- Extraversion (0-100): sociability, assertiveness, positive energy\n"
         "- Agreeableness (0-100): cooperativeness, trust, empathy\n"
         "- Neuroticism (0-100): emotional instability, anxiety, negative affect\n\n"
-        "Return a single JSON object, no other text:\n"
+        "Return ONLY a single compact JSON object. Keep each reasoning value to 3-5 words max:\n"
         '{"openness":75,"conscientiousness":60,"extraversion":45,"agreeableness":70,'
-        '"neuroticism":30,"confidence":68,"reasoning":{"openness":"...","conscientiousness":"...",'
-        '"extraversion":"...","agreeableness":"...","neuroticism":"..."}}'
+        '"neuroticism":30,"confidence":68,"reasoning":{"openness":"curious, varied interests",'
+        '"conscientiousness":"organised, goal-driven","extraversion":"reserved, low energy",'
+        '"agreeableness":"empathetic, cooperative","neuroticism":"calm, stable"}}'
     )
 
 

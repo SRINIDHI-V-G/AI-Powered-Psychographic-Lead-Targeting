@@ -29,7 +29,7 @@ const TIER_STYLE: Record<string, string> = {
   Cold: 'bg-blue-100 text-blue-700',
 };
 
-const OCEAN_DIMS = ['O', 'C', 'E', 'A', 'S'] as const;
+const OCEAN_DIMS = ['O', 'C', 'E', 'A', 'N'] as const;
 const OCEAN_KEYS = ['openness', 'conscientiousness', 'extraversion', 'agreeableness', 'neuroticism'] as const;
 
 export default function DiscoveryPage({ params }: { params: { id: string } }) {

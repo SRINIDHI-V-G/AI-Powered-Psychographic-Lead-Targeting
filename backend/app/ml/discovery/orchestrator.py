@@ -2,14 +2,19 @@
 DiscoveryOrchestrator — coordinates discovery providers for a product.
 
 Responsibilities:
-  1. Select the correct provider(s) based on product category + credentials.
-  2. Call discover_users() on each provider.
-  3. Persist RawDiscoveredUser → DiscoveredUser in the DB.
-  4. Call collect_content() per user and persist UserContent.
-  5. Update DiscoveryJob status counters throughout.
+  1. Build a list of ALL configured providers.
+  2. Run all providers' discover_users() concurrently (asyncio.gather).
+     Failures on individual providers are caught and logged; other
+     providers continue regardless.
+  3. Aggregate users from all successful providers.
+  4. Persist RawDiscoveredUser → DiscoveredUser in the DB (with dedup).
+  5. Call collect_content() per user and persist UserContent.
+  6. Update DiscoveryJob status counters throughout.
 
-The orchestrator is the only component that writes to the DB.
-Providers never see the DB — they only produce data objects.
+Provider isolation guarantee:
+  Any provider that raises during discover_users() is skipped and its
+  error recorded in job.search_config["provider_results"]. The pipeline
+  continues as long as at least one provider returns users.
 
 Architecture separation:
   Discovery providers  → find people → DiscoveredUser + UserContent
@@ -31,24 +36,28 @@ from app.models.discovery import DiscoveredUser, DiscoveryJob, UserContent
 logger = logging.getLogger(__name__)
 
 
-def _build_provider_registry() -> list[BaseDiscoveryProvider]:
+async def _build_provider_registry() -> list[BaseDiscoveryProvider]:
     """
     Return all available real providers in priority order.
 
-    Provider selection priority (first matching provider wins):
+    Priority order (highest first):
       1. RedditProvider     — if Reddit credentials are configured
       2. YouTubeProvider    — if YouTube API key is configured
       3. InstagramProvider  — if Instagram credentials are configured
+      4. GoogleReviewsProvider — if Google Places API key is configured
 
     Returns an empty list when MOCK_DISCOVERY=True or no credentials are
     configured for any provider. The orchestrator falls back to
     MockDiscoveryProvider in that case.
+
+    InstagramProvider.__init__ performs a synchronous blocking network login.
+    It is initialised via asyncio.to_thread() so the event loop is never blocked.
     """
-    # Forced mock mode — bypass all real providers
+    import asyncio
+
     if settings.MOCK_DISCOVERY:
         return []
 
-    # No real credentials configured at all — fall back to mock
     if not (
         settings.reddit_credentials_configured()
         or settings.youtube_credentials_configured()
@@ -59,7 +68,6 @@ def _build_provider_registry() -> list[BaseDiscoveryProvider]:
 
     providers: list[BaseDiscoveryProvider] = []
 
-    # Reddit (primary source — text-rich, ideal for OCEAN scoring)
     if settings.reddit_credentials_configured():
         try:
             from app.ml.discovery.reddit_provider import RedditProvider
@@ -67,7 +75,6 @@ def _build_provider_registry() -> list[BaseDiscoveryProvider]:
         except Exception as exc:
             logger.warning("RedditProvider failed to initialise: %s", exc)
 
-    # YouTube (secondary source — comment-based text signals)
     if settings.youtube_credentials_configured():
         try:
             from app.ml.discovery.youtube_provider import YouTubeProvider
@@ -75,15 +82,20 @@ def _build_provider_registry() -> list[BaseDiscoveryProvider]:
         except Exception as exc:
             logger.warning("YouTubeProvider failed to initialise: %s", exc)
 
-    # Instagram (tertiary source — poster + commenter discovery)
     if settings.instagram_credentials_configured():
+        # Run blocking login in a thread so the event loop is not frozen.
         try:
             from app.ml.discovery.instagram_provider import InstagramProvider
-            providers.append(InstagramProvider())
+            provider = await asyncio.wait_for(
+                asyncio.to_thread(InstagramProvider),
+                timeout=30.0,
+            )
+            providers.append(provider)
+        except asyncio.TimeoutError:
+            logger.warning("InstagramProvider init timed out (30s) — skipping")
         except Exception as exc:
             logger.warning("InstagramProvider failed to initialise: %s", exc)
 
-    # Google Reviews (local business customer discovery — inferred city location)
     if settings.google_places_credentials_configured():
         try:
             from app.ml.discovery.google_reviews_provider import GoogleReviewsProvider
@@ -94,123 +106,81 @@ def _build_provider_registry() -> list[BaseDiscoveryProvider]:
     return providers
 
 
-def _select_provider(
-    registry: list[BaseDiscoveryProvider],
-    product_category: str,
-    product_region: str,
-) -> BaseDiscoveryProvider | None:
-    """
-    Pick the highest-priority provider that supports the product's category
-    and region.  Returns None if no real provider matches (triggers mock).
-
-    Selection rules:
-      1. Exact category match beats wildcard match.
-      2. Exact region match beats wildcard match.
-      3. Among equally-ranked providers, first in registry wins.
-    """
-    cat = (product_category or "").lower()
-    region = (product_region or "").lower()
-
-    exact: list[BaseDiscoveryProvider] = []
-    wildcard: list[BaseDiscoveryProvider] = []
-
-    for p in registry:
-        cats = [c.lower() for c in p.supported_categories]
-        regions = [r.lower() for r in p.supported_regions]
-
-        cat_match = cat in cats or "*" in cats
-        region_match = region in regions or "*" in regions
-
-        if not (cat_match and region_match):
-            continue
-
-        if cat in cats and region in regions:
-            exact.append(p)
-        else:
-            wildcard.append(p)
-
-    if exact:
-        return exact[0]
-    if wildcard:
-        return wildcard[0]
-    return None
-
-
-def _get_provider(
+async def _get_all_providers(
     product_category: str = "",
     product_region: str = "",
     preferred_provider: str = "",
-) -> BaseDiscoveryProvider:
+) -> list[BaseDiscoveryProvider]:
     """
-    Return the appropriate discovery provider for a given product.
+    Return ALL configured and available providers to run for a discovery job.
 
-    Selection order:
-      1. preferred_provider (if set in search_config and credentials are configured)
-      2. Best real provider from registry (Reddit → YouTube → Instagram → GoogleReviews)
-      3. MockDiscoveryProvider as fallback when no real credentials are configured
+    If preferred_provider is set (via job.search_config["preferred_provider"]),
+    that provider is moved to the front of the list so it runs first.  All
+    other configured providers still run after it.
 
-    preferred_provider can be set in job search_config to force a specific
-    provider regardless of registry priority order.  Useful for testing and
-    for products where a specific platform is known to have better coverage.
+    Falls back to [MockDiscoveryProvider] when:
+      - MOCK_DISCOVERY=True, OR
+      - No real credentials are configured AND FALLBACK_TO_MOCK_ON_ERROR=True.
 
-    Uses MockDiscoveryProvider when:
-      - MOCK_DISCOVERY=True in .env
-      - No credentials are configured for any provider
-      - No registered provider supports the product's category/region
+    Raises RuntimeError when no providers are available and
+    FALLBACK_TO_MOCK_ON_ERROR=False.
     """
     if settings.MOCK_DISCOVERY:
         logger.info("DiscoveryOrchestrator: MOCK_DISCOVERY=True — using MockDiscoveryProvider")
         from app.ml.discovery.mock_provider import MockDiscoveryProvider
-        return MockDiscoveryProvider(delay_ms=0)
+        return [MockDiscoveryProvider(delay_ms=0)]
 
-    registry = _build_provider_registry()
+    registry = await _build_provider_registry()
 
-    # Honour preferred_provider from search_config when set
-    if preferred_provider:
-        pref_lower = preferred_provider.lower()
-        for p in registry:
-            if p.name == pref_lower:
-                logger.info(
-                    "DiscoveryOrchestrator: using preferred_provider=%s", p.name
-                )
-                return p
-        logger.warning(
-            "DiscoveryOrchestrator: preferred_provider=%r not available "
-            "(not configured or failed to init) — falling back to auto-select",
-            preferred_provider,
-        )
-
-    provider = _select_provider(registry, product_category, product_region)
-
-    if provider is None:
+    if not registry:
         if settings.FALLBACK_TO_MOCK_ON_ERROR:
             logger.warning(
-                "No real provider found for category=%r region=%r — falling back to MockDiscoveryProvider. "
-                "Set FALLBACK_TO_MOCK_ON_ERROR=false to surface this as a job failure instead.",
-                product_category, product_region,
+                "DiscoveryOrchestrator: no real providers configured — "
+                "falling back to MockDiscoveryProvider. "
+                "Set FALLBACK_TO_MOCK_ON_ERROR=false to surface this as a failure."
             )
             from app.ml.discovery.mock_provider import MockDiscoveryProvider
-            return MockDiscoveryProvider(delay_ms=0)
+            return [MockDiscoveryProvider(delay_ms=0)]
         raise RuntimeError(
-            "No real discovery provider could be initialised for "
-            f"category={product_category!r} region={product_region!r}. "
-            "Configure at least one credential set (REDDIT_USER_AGENT, "
-            "YOUTUBE_API_KEY, GOOGLE_PLACES_API_KEY, or valid Instagram credentials) "
-            "and ensure the provider initialises without errors. "
+            "No discovery providers are configured. "
+            "Set at least one of: REDDIT_USER_AGENT, YOUTUBE_API_KEY, "
+            "GOOGLE_PLACES_API_KEY, or INSTAGRAM_USERNAME+PASSWORD. "
             "Set FALLBACK_TO_MOCK_ON_ERROR=true to use MockDiscoveryProvider instead."
         )
 
+    # Move preferred_provider to the front, keep all others after it.
+    if preferred_provider:
+        pref_lower = preferred_provider.lower()
+        front = [p for p in registry if p.name == pref_lower]
+        rest  = [p for p in registry if p.name != pref_lower]
+        if front:
+            logger.info(
+                "DiscoveryOrchestrator: preferred_provider=%s moved to front; "
+                "remaining providers will also run: %s",
+                preferred_provider, [p.name for p in rest],
+            )
+            return front + rest
+        logger.warning(
+            "DiscoveryOrchestrator: preferred_provider=%r not in registry "
+            "(not configured or failed to init) — running all providers in default order",
+            preferred_provider,
+        )
+
     logger.info(
-        "DiscoveryOrchestrator: selected provider=%s for category=%r region=%r",
-        provider.name, product_category, product_region,
+        "DiscoveryOrchestrator: %d provider(s) will run: %s",
+        len(registry), [p.name for p in registry],
     )
-    return provider
+    return registry
 
 
 class DiscoveryOrchestrator:
     """
     Runs the full discovery + content-collection pipeline for one job.
-    Called as a FastAPI BackgroundTask.
+
+    All configured providers are attempted sequentially.  A provider that
+    raises an exception is logged and skipped; remaining providers continue.
+    The job succeeds as long as at least one provider returns users with
+    collectable content.
     """
 
     async def run(self, job_id: UUID, db: AsyncSession) -> None:
@@ -219,17 +189,18 @@ class DiscoveryOrchestrator:
 
         Stages:
           1. Load job + product from DB.
-          2. Extract keywords from motivation categories.
-          3. Discover users via provider.
-          4. Persist discovered users.
-          5. Collect content for each user.
-          6. Persist content.
-          7. Mark job complete and advance product.pipeline_step.
+          2. Extract keywords from motivation categories + similar products.
+          3. Get all configured providers.
+          4. Run each provider sequentially; catch + log failures per provider.
+          5. Aggregate raw users from all successful providers.
+          6. Persist discovered users (with dedup).
+          7. Collect + persist content for each user (per-user try/except).
+          8. Mark job complete and advance product.pipeline_step.
+          9. Auto-trigger NLP if any content was collected.
         """
         _log = f"[DISCOVERY job={str(job_id)[:8]}]"
         logger.info("%s START", _log)
 
-        # ── 1. Load job ───────────────────────────────────────────────────────
         job: DiscoveryJob | None = await db.get(DiscoveryJob, job_id)
         if not job:
             logger.error("%s job not found in DB", _log)
@@ -240,7 +211,7 @@ class DiscoveryOrchestrator:
         await db.commit()
 
         try:
-            # ── 2. Load product + keywords ────────────────────────────────────
+            # ── 1. Load product + keywords ────────────────────────────────────
             from app.models.product import Product, ProductStatus
             from app.crud.motivation import get_motivations_by_product
 
@@ -248,15 +219,32 @@ class DiscoveryOrchestrator:
             if not product:
                 raise ValueError(f"Product {job.product_id} not found")
 
-            # Merge keywords from all motivation OCEAN profiles
-            all_keywords: list[str] = list(product.keywords or [])
+            # Immediately surface progress in the UI — users see step 5 while
+            # providers are running instead of watching step 4 the whole time.
+            product.status = ProductStatus.discovering
+            product.pipeline_step = 5
+            await db.commit()
+
+            # ── Buyer-intent keyword assembly ─────────────────────────────────
+            # ONLY search_keywords are used for provider queries.
+            #
+            # search_keywords: phrases buyers use in discussions/content
+            #   → passed to YouTube, Instagram, Reddit, Google Reviews
+            #
+            # interest_tags: personality/lifestyle labels (e.g. "music production",
+            #   "audio engineering") used for OCEAN scoring, matching, and
+            #   handle generation — NOT for search.
+            #   Passing them to Instagram search_users() finds businesses whose
+            #   account names match those labels (e.g. music production studios),
+            #   not individual buyers.
             categories = await get_motivations_by_product(db, product.id)
+            all_keywords: list[str] = []
             for cat in categories:
                 if cat.ocean_profile:
                     all_keywords.extend(cat.ocean_profile.search_keywords or [])
-                    all_keywords.extend(cat.ocean_profile.interest_tags or [])
+                    # interest_tags deliberately excluded here — they are used
+                    # downstream in OCEAN scoring and matching only.
 
-            # Deduplicate while preserving order
             seen_kw: set[str] = set()
             unique_keywords: list[str] = []
             for kw in all_keywords:
@@ -266,15 +254,39 @@ class DiscoveryOrchestrator:
                     unique_keywords.append(kw_clean)
 
             logger.info(
-                "%s merged %d unique keywords from %d motivation categories",
+                "%s built %d buyer-intent keywords from %d motivation categories "
+                "(product.keywords excluded to avoid seller contamination)",
                 _log, len(unique_keywords), len(categories),
             )
 
-            # ── Expand with similar product keywords ──────────────────────────
-            # discovery_service pre-populates job.search_config["similar_products"]
-            # with a list of {name, keywords, similarity_score} dicts before this
-            # orchestrator is called. We merge those keywords here so providers
-            # search for discussions about similar products in the same run.
+            # ── Location-scoped query injection ───────────────────────────────
+            # Prepend location-qualified variants of the top queries so that
+            # providers surface geographically relevant content first.
+            # E.g. "work from home tips" + Chennai → "work from home tips Chennai"
+
+            # Safety: derive city from target_location ("Chennai, India" → "Chennai")
+            # when target_city was not stored explicitly (older products or API-created).
+            _derived_city = (product.target_city or "").strip()
+            if not _derived_city and product.target_location and "," in product.target_location:
+                _derived_city = product.target_location.split(",")[0].strip()
+
+            location_tag = _derived_city
+            if not location_tag:
+                location_tag = (product.target_country or "").strip()
+            if location_tag and location_tag.lower() not in ("global", "worldwide", ""):
+                location_variants: list[str] = []
+                for kw in unique_keywords[:8]:  # top 8 queries get location variant
+                    lv = f"{kw} {location_tag.lower()}"
+                    if lv not in seen_kw:
+                        seen_kw.add(lv)
+                        location_variants.append(lv)
+                # Insert location-scoped queries first — providers process them first
+                unique_keywords = location_variants + unique_keywords
+                logger.info(
+                    "%s prepended %d location-scoped queries (location=%r)",
+                    _log, len(location_variants), location_tag,
+                )
+
             sp_entries: list[dict] = (job.search_config or {}).get("similar_products", [])
             sp_kw_added = 0
             for sp_entry in sp_entries:
@@ -291,93 +303,232 @@ class DiscoveryOrchestrator:
                     _log, sp_kw_added, len(sp_entries), len(unique_keywords),
                 )
 
-            # ── 3. Select provider + discover ─────────────────────────────────
+            # ── 2. Get ALL configured providers ──────────────────────────────
             preferred = (job.search_config or {}).get("preferred_provider", "")
-            provider = _get_provider(
+            providers = await _get_all_providers(
                 product_category=product.category or "",
                 product_region=product.target_country or "",
                 preferred_provider=preferred,
             )
-            job.provider_name = provider.name
-            job.sources = [provider.platform]
-            await db.commit()
 
+            # ── 3. Run all providers concurrently; isolate failures ───────────
+            # asyncio.gather runs every provider in parallel — if two providers
+            # each take 3 min, total is 3 min instead of 6 min.
+            import asyncio as _asyncio_providers
+
+            all_raw_with_provider: list[tuple[RawDiscoveredUser, BaseDiscoveryProvider]] = []
+            provider_results: dict[str, dict] = {}
+            tried_names: list[str] = []
+            successful_platforms: list[str] = []
+
+            async def _run_provider(
+                p: BaseDiscoveryProvider,
+            ) -> tuple[BaseDiscoveryProvider, list[RawDiscoveredUser], Exception | None]:
+                logger.info(
+                    "%s provider=%s START (keywords=%d max_users=%d)",
+                    _log, p.name, len(unique_keywords), job.max_users,
+                )
+                try:
+                    users = await p.discover_users(
+                        keywords=unique_keywords,
+                        target_city=_derived_city or product.target_city,
+                        max_users=job.max_users,
+                        search_config=job.search_config or {},
+                    )
+                    return p, users, None
+                except Exception as exc:
+                    return p, [], exc
+
+            provider_outcomes: list[
+                tuple[BaseDiscoveryProvider, list[RawDiscoveredUser], Exception | None]
+            ] = await _asyncio_providers.gather(*[_run_provider(p) for p in providers])
+
+            for provider, raw_users, exc in provider_outcomes:
+                tried_names.append(provider.name)
+                if exc:
+                    logger.warning(
+                        "%s provider=%s FAILED — skipping. Error: %s",
+                        _log, provider.name, exc,
+                    )
+                    provider_results[provider.name] = {
+                        "status": "failed",
+                        "error": str(exc)[:300],
+                    }
+                else:
+                    logger.info(
+                        "%s provider=%s → %d users", _log, provider.name, len(raw_users)
+                    )
+                    for raw in raw_users:
+                        all_raw_with_provider.append((raw, provider))
+                    provider_results[provider.name] = {
+                        "status": "ok",
+                        "users_found": len(raw_users),
+                    }
+                    if raw_users and provider.platform not in successful_platforms:
+                        successful_platforms.append(provider.platform)
+
+            # If combined results exceed max_users, interleave round-robin so every
+            # provider that found users contributes equally to the final pool.
+            # A simple [:max_users] slice would silently drop later providers entirely.
+            if job.max_users and len(all_raw_with_provider) > job.max_users:
+                # Build per-provider pools (order-preserving)
+                _pools: dict[str, list[tuple[RawDiscoveredUser, BaseDiscoveryProvider]]] = {}
+                for _raw, _prov in all_raw_with_provider:
+                    _pools.setdefault(_prov.name, []).append((_raw, _prov))
+
+                _interleaved: list[tuple[RawDiscoveredUser, BaseDiscoveryProvider]] = []
+                _provider_names = list(_pools.keys())
+                _idx = 0
+                while len(_interleaved) < job.max_users:
+                    _contributed = False
+                    for _name in _provider_names:
+                        if _pools[_name] and len(_interleaved) < job.max_users:
+                            _interleaved.append(_pools[_name].pop(0))
+                            _contributed = True
+                    if not _contributed:
+                        break
+                all_raw_with_provider = _interleaved
+                logger.info(
+                    "%s interleaved %d providers → capped to max_users=%d",
+                    _log, len(_provider_names), job.max_users,
+                )
+
+            total_raw = len(all_raw_with_provider)
             logger.info(
-                "%s provider=%s keywords=%d max_users=%d city=%s",
-                _log, provider.name, len(unique_keywords),
-                job.max_users, product.target_city,
+                "%s all providers done — total raw users=%d results=%s",
+                _log, total_raw, provider_results,
             )
 
-            raw_users = await provider.discover_users(
-                keywords=unique_keywords,
-                target_city=product.target_city,
-                max_users=job.max_users,
-                search_config=job.search_config or {},
-            )
-            logger.info("%s discovered %d raw users", _log, len(raw_users))
+            # Update job metadata: record which providers ran + their outcomes
+            job.provider_name = "+".join(tried_names) if tried_names else "none"
+            job.sources = list(successful_platforms)
+            config = dict(job.search_config or {})
+            config["provider_results"] = provider_results
+            job.search_config = config
+            await db.commit()
 
             # ── 4. Persist discovered users ───────────────────────────────────
             job.status = "collecting"
             await db.commit()
 
-            persisted_users: list[tuple[DiscoveredUser, RawDiscoveredUser]] = []
-            for raw in raw_users:
+            # ── Location filtering ────────────────────────────────────────────
+            # When a specific target city/country is set, deprioritise users
+            # with unknown location so the lead pool is geographically relevant.
+            # "confirmed" and "regional" users are always kept.
+            # "unknown" users are admitted only if we don't have enough confirmed ones.
+            _target_city = _derived_city or (product.target_city or "").strip()
+            _target_country = (product.target_country or "").strip()
+            _has_location_target = bool(_target_city) or bool(
+                _target_country and _target_country.lower()
+                not in ("global", "worldwide", "")
+            )
+            if _has_location_target:
+                _confirmed = [
+                    (r, p) for r, p in all_raw_with_provider
+                    if r.location_confidence in ("confirmed", "regional")
+                ]
+                _unknown = [
+                    (r, p) for r, p in all_raw_with_provider
+                    if r.location_confidence == "unknown"
+                ]
+                _min_users = max(5, (job.max_users or 50) // 3)
+                if len(_confirmed) >= _min_users:
+                    # Enough confirmed users — drop unknowns
+                    all_raw_with_provider = _confirmed
+                else:
+                    # Not enough confirmed — pad with some unknowns to keep pool viable
+                    _fill = max(0, _min_users - len(_confirmed))
+                    all_raw_with_provider = _confirmed + _unknown[:_fill]
+                logger.info(
+                    "%s location filter: confirmed=%d unknown=%d → using %d users",
+                    _log, len(_confirmed), len(_unknown), len(all_raw_with_provider),
+                )
+
+            # (discovered_user, raw_user, provider_that_found_them)
+            persisted_users: list[tuple[DiscoveredUser, RawDiscoveredUser, BaseDiscoveryProvider]] = []
+            for raw, src_provider in all_raw_with_provider:
                 du = await self._upsert_user(db, job, raw)
                 if du:
-                    persisted_users.append((du, raw))
+                    persisted_users.append((du, raw, src_provider))
 
             job.users_discovered = len(persisted_users)
             await db.commit()
             logger.info(
-                "%s persisted %d discovered users", _log, len(persisted_users)
+                "%s persisted %d discovered users (deduplicated from %d raw)",
+                _log, len(persisted_users), total_raw,
             )
 
-            # ── 5 + 6. Collect + persist content (batched) ────────────────────
+            # ── 5 + 6. Collect + persist content (concurrent HTTP, sequential DB) ─
+            # HTTP fetches run concurrently within each batch (big speedup vs sequential).
+            # DB writes stay sequential on the shared session (safe for AsyncSession).
+            import asyncio as _asyncio
+
+            async def _fetch(
+                raw: RawDiscoveredUser,
+                src: BaseDiscoveryProvider,
+                max_items: int,
+            ) -> tuple[list[ContentItem], Exception | None]:
+                try:
+                    return await src.collect_content(raw, max_items=max_items), None
+                except Exception as exc:
+                    return [], exc
+
             batch_size = settings.DISCOVERY_CONTENT_BATCH_SIZE
             for i in range(0, len(persisted_users), batch_size):
                 batch = persisted_users[i: i + batch_size]
-                for du, raw in batch:
-                    try:
-                        content_items = await provider.collect_content(
-                            raw,
-                            max_items=settings.DISCOVERY_CONTENT_PER_USER,
+
+                # Fire all HTTP calls in this batch concurrently
+                fetch_results: list[tuple[list[ContentItem], Exception | None]] = (
+                    await _asyncio.gather(*[
+                        _fetch(raw, src, settings.DISCOVERY_CONTENT_PER_USER)
+                        for _, raw, src in batch
+                    ])
+                )
+
+                # Persist sequentially (safe on single AsyncSession)
+                for (du, raw, src_provider), (content_items, exc) in zip(batch, fetch_results):
+                    if exc:
+                        logger.warning(
+                            "%s content collection failed for %s (%s): %s",
+                            _log, raw.username, src_provider.name, exc,
                         )
+                    elif content_items:
                         await self._persist_content(db, du.id, content_items)
                         du.content_collected = True
                         job.users_content_collected += 1
-                    except Exception as exc:
-                        logger.warning(
-                            "%s content collection failed for %s: %s",
-                            _log, raw.username, exc,
-                        )
+
                 await db.commit()
                 logger.info(
                     "%s content collected: %d / %d",
                     _log, job.users_content_collected, len(persisted_users),
                 )
 
-            # ── 7. Mark job + product complete ────────────────────────────────
+            # ── 7. Mark job complete ──────────────────────────────────────────
+            # product.status was already set to "discovering" (step 5) at the
+            # start of this run so the UI shows progress immediately.
             job.status = "completed"
             job.completed_at = datetime.now(timezone.utc)
-
-            product.status = ProductStatus.discovering
-            product.pipeline_step = 5
             await db.commit()
 
             logger.info(
-                "%s DONE — %d users discovered, %d with content",
-                _log, job.users_discovered, job.users_content_collected,
+                "%s DONE — providers_tried=%s users_discovered=%d users_with_content=%d",
+                _log, tried_names, job.users_discovered, job.users_content_collected,
             )
 
-            # ── 8. Auto-trigger NLP pipeline ──────────────────────────────────
-            # Only fire if there is content to process.
+            # ── 8. Auto-trigger NLP — fires if any provider collected content ──
             if job.users_content_collected > 0:
-                from app.workers.dispatch import dispatch
+                from app.services.nlp_service import start_nlp_background
                 logger.info(
                     "%s auto-triggering NLP for %d users",
                     _log, job.users_content_collected,
                 )
-                dispatch("nlp", str(product.id))
+                await start_nlp_background(str(product.id))
+            else:
+                logger.warning(
+                    "%s no content collected from any provider — NLP not triggered. "
+                    "Provider results: %s",
+                    _log, provider_results,
+                )
 
         except Exception as exc:
             import traceback
@@ -394,13 +545,12 @@ class DiscoveryOrchestrator:
         raw: RawDiscoveredUser,
     ) -> DiscoveredUser | None:
         """
-        Insert a discovered user, skipping duplicates (same platform+user+job).
-        Returns the persisted DiscoveredUser or None if skipped.
+        Insert a discovered user, skipping duplicates within this job
+        (same platform + platform_user_id + job_id).
+        Returns the persisted DiscoveredUser, or None if it was a duplicate.
         """
         from sqlalchemy import select
-        from app.models.discovery import DiscoveredUser
 
-        # Check for existing user in this job (ON CONFLICT equivalent)
         existing = await db.execute(
             select(DiscoveredUser).where(
                 DiscoveredUser.platform == raw.platform,
@@ -409,7 +559,7 @@ class DiscoveryOrchestrator:
             )
         )
         if existing.scalar_one_or_none():
-            return None  # already persisted for this job
+            return None
 
         du = DiscoveredUser(
             discovery_job_id=job.id,
@@ -428,7 +578,7 @@ class DiscoveryOrchestrator:
             raw_profile=raw.raw_profile,
         )
         db.add(du)
-        await db.flush()  # assigns du.id without committing
+        await db.flush()
         return du
 
     async def _persist_content(

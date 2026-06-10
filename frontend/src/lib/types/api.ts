@@ -18,17 +18,19 @@ export interface CompanyCreateResponse extends Company {
 // ─── Product ─────────────────────────────────────────────────────────────────
 export type ProductStatus =
   | 'pending'
-  | 'processing'
+  | 'analyzing'
   | 'motivations_generated'
+  | 'product_ocean_ready'
+  | 'similar_products_found'
   | 'discovering'
   | 'nlp_processing'
   | 'ocean_scoring'
   | 'matching'
-  | 'ranking'
   | 'ranked'
+  | 'completed'
   | 'failed';
 
-export type PriceRange = 'budget' | 'standard' | 'premium';
+export type PriceRange = 'budget' | 'mid_range' | 'premium' | 'luxury';
 
 export interface Product {
   id: string;

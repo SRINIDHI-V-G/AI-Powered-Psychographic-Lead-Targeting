@@ -201,9 +201,9 @@ async def generate_product_ocean_background(product_id: str) -> None:
             )
 
             # ── Auto-trigger similar product discovery ────────────────────────
-            from app.workers.dispatch import dispatch
-            dispatch("similar_products", product_id)
-            logger.info("%s dispatched 'similar_products'", _log)
+            from app.services.product_similarity_service import generate_similar_products_background
+            await generate_similar_products_background(product_id)
+            logger.info("%s similar_products complete", _log)
 
         except Exception as exc:
             tb = traceback.format_exc()

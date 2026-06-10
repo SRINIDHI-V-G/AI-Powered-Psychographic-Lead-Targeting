@@ -28,7 +28,7 @@ from app.config import settings
 from app.crud.product_ocean import get_product_ocean
 from app.crud.similar_products import replace_similar_products
 from app.database import AsyncSessionLocal
-from app.ml.llm_client import OllamaClient
+from app.ml.llm_client import get_llm_client
 from app.ml.similarity.product_similarity import (
     SIMILAR_PRODUCTS_SYSTEM_PROMPT,
     build_similar_products_prompt,
@@ -39,8 +39,9 @@ from app.models.product import Product, ProductStatus
 
 logger = logging.getLogger(__name__)
 
-# Tokens needed for 8 candidates × ~180 tokens each + JSON overhead
-_NUM_PREDICT = 1800
+# 8 candidates × ~130 tokens each + JSON overhead ≈ 1040; 1100 gives safe headroom
+_NUM_PREDICT = 1100
+_NUM_CTX = 1024
 
 
 # ── Fallback similar products (category-keyed) ────────────────────────────────
@@ -210,7 +211,7 @@ async def _call_llm(prompt: str, _log: str) -> list[dict] | None:
     temperature if the first attempt returns unparseable output.
     Returns a validated list of candidate dicts, or None on complete failure.
     """
-    client = OllamaClient()
+    client = get_llm_client()
     # Use the dedicated timeout for this pipeline step
     client.timeout = settings.SIMILAR_PRODUCTS_LLM_TIMEOUT
 
@@ -228,6 +229,7 @@ async def _call_llm(prompt: str, _log: str) -> list[dict] | None:
             system=SIMILAR_PRODUCTS_SYSTEM_PROMPT,
             temperature=0.3,
             num_predict=_NUM_PREDICT,
+            num_ctx=_NUM_CTX,
         )
         logger.info("%s Ollama responded (%d chars)", _log, len(raw))
         logger.debug("%s RAW (first 600):\n%s", _log, raw[:600])
@@ -249,6 +251,7 @@ async def _call_llm(prompt: str, _log: str) -> list[dict] | None:
             system=SIMILAR_PRODUCTS_SYSTEM_PROMPT,
             temperature=0.6,
             num_predict=_NUM_PREDICT,
+            num_ctx=_NUM_CTX,
         )
         logger.info("%s retry responded (%d chars)", _log, len(raw2))
         candidates = parse_similar_products_response(raw2)
@@ -443,6 +446,12 @@ async def generate_similar_products_background(product_id: str) -> None:
             logger.info(
                 "%s DONE — %d similar products ready, pipeline_step=4", _log, len(saved)
             )
+
+            # ── 8. Auto-trigger discovery ─────────────────────────────────────
+            # Await directly (fast: just creates DB job + schedules background task)
+            from app.services.discovery_service import auto_start_discovery
+            await auto_start_discovery(product_id)
+            logger.info("%s auto_start_discovery complete", _log)
 
         except Exception as exc:
             tb = traceback.format_exc()

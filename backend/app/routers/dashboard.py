@@ -1,10 +1,10 @@
-"""
+﻿"""
 Dashboard overview router.
 
 Provides company-wide summary statistics and pipeline activity feed.
 
 Endpoints:
-  GET /dashboard/overview   — aggregate stats + recent activity
+  GET /dashboard/overview   â€” aggregate stats + recent activity
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from app.models.product import Product, ProductStatus
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
 
-# ── Response schemas ──────────────────────────────────────────────────────────
+# â”€â”€ Response schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class ProductPipelineSummary(BaseModel):
     product_id: str
@@ -58,7 +58,7 @@ class DashboardOverviewResponse(BaseModel):
     warm_leads_count: int
     active_pipeline_jobs: int       # discovery jobs currently running
 
-    # Real provider breakdown — populated from discovery_jobs.provider_name
+    # Real provider breakdown â€” populated from discovery_jobs.provider_name
     discovery_sources: list[ProviderBreakdown]
 
     # Per-product summary
@@ -70,7 +70,7 @@ class DashboardOverviewResponse(BaseModel):
     generated_at: datetime
 
 
-# ── Endpoint ──────────────────────────────────────────────────────────────────
+# â”€â”€ Endpoint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.get(
     "/overview",
@@ -87,7 +87,7 @@ async def get_dashboard_overview(
     db: AsyncSession = Depends(get_db),
 ) -> DashboardOverviewResponse:
 
-    # ── 1. Load all products for this company ─────────────────────────────────
+    # â”€â”€ 1. Load all products for this company â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     products_r = await db.execute(
         select(Product)
         .where(Product.company_id == company.id)
@@ -103,12 +103,13 @@ async def get_dashboard_overview(
             hot_leads_count=0,
             warm_leads_count=0,
             active_pipeline_jobs=0,
+            discovery_sources=[],
             products=[],
             recent_activity=[],
             generated_at=datetime.now(timezone.utc),
         )
 
-    # ── 2. Discovered user counts per product ─────────────────────────────────
+    # â”€â”€ 2. Discovered user counts per product â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     users_r = await db.execute(
         select(DiscoveredUser.product_id, func.count().label("cnt"))
         .where(DiscoveredUser.product_id.in_(product_ids))
@@ -117,7 +118,7 @@ async def get_dashboard_overview(
     user_counts: dict = {row.product_id: row.cnt for row in users_r}
     total_discovered = sum(user_counts.values())
 
-    # ── 3. Lead tier counts per product ──────────────────────────────────────
+    # â”€â”€ 3. Lead tier counts per product â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # Tiers derived from final_score: hot>=75, warm>=55, cold<55
     leads_r = await db.execute(
         select(
@@ -143,7 +144,7 @@ async def get_dashboard_overview(
     total_hot = sum(hot_per_product.values())
     total_warm = sum(warm_per_product.values())
 
-    # ── 4. Active discovery jobs ──────────────────────────────────────────────
+    # â”€â”€ 4. Active discovery jobs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     active_r = await db.execute(
         select(func.count())
         .select_from(DiscoveryJob)
@@ -154,25 +155,25 @@ async def get_dashboard_overview(
     )
     active_jobs: int = active_r.scalar_one()
 
-    # ── 4b. Provider breakdown (users discovered per provider) ────────────────
+    # â”€â”€ 4b. Provider breakdown â€” count per platform from discovered_users â”€â”€â”€â”€
+    # Group by DiscoveredUser.platform (not DiscoveryJob.provider_name) so that
+    # multi-provider jobs (where provider_name = "youtube+instagram") still
+    # produce accurate per-platform counts.
     provider_r = await db.execute(
         select(
-            DiscoveryJob.provider_name,
-            func.sum(DiscoveryJob.users_discovered).label("total"),
+            DiscoveredUser.platform,
+            func.count().label("total"),
         )
-        .where(
-            DiscoveryJob.product_id.in_(product_ids),
-            DiscoveryJob.status == "completed",
-        )
-        .group_by(DiscoveryJob.provider_name)
+        .where(DiscoveredUser.product_id.in_(product_ids))
+        .group_by(DiscoveredUser.platform)
     )
     discovery_sources = [
-        ProviderBreakdown(provider=row.provider_name, users_discovered=int(row.total or 0))
+        ProviderBreakdown(provider=row.platform, users_discovered=int(row.total or 0))
         for row in provider_r
         if row.total and int(row.total) > 0
     ]
 
-    # ── 5. Per-product summaries ──────────────────────────────────────────────
+    # â”€â”€ 5. Per-product summaries â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     product_summaries = [
         ProductPipelineSummary(
             product_id=str(p.id),
@@ -186,7 +187,7 @@ async def get_dashboard_overview(
         for p in products
     ]
 
-    # ── 6. Recent activity feed ───────────────────────────────────────────────
+    # â”€â”€ 6. Recent activity feed â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # Derive activity events from products + discovery jobs
     activity: list[ActivityEvent] = []
 
@@ -259,3 +260,4 @@ async def get_dashboard_overview(
         recent_activity=activity,
         generated_at=datetime.now(timezone.utc),
     )
+

@@ -3,7 +3,7 @@
 import { useProduct, useProductStatus, useRestartProduct } from '@/lib/hooks/useProducts';
 import { useMatchStatus } from '@/lib/hooks/useLeads';
 import { useLeadsAnalytics } from '@/lib/hooks/useAnalytics';
-import { useDiscoveryJobs } from '@/lib/hooks/useDiscovery';
+import { useDiscoveryJobs, useStartDiscovery } from '@/lib/hooks/useDiscovery';
 import { useOceanStatus } from '@/lib/hooks/useOceanStatus';
 import { useMotivations } from '@/lib/hooks/useMotivations';
 import { useLeads } from '@/lib/hooks/useLeads';
@@ -11,7 +11,7 @@ import { DonutChart } from '@/components/charts/DonutChart';
 import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import { ErrorState } from '@/components/shared/ErrorState';
 import { getProviderColor } from '@/lib/providerColors';
-import { RotateCcw } from 'lucide-react';
+import { RotateCcw, Search } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function ProductOverviewPage({ params }: { params: { id: string } }) {
@@ -25,6 +25,7 @@ export default function ProductOverviewPage({ params }: { params: { id: string }
   const { data: analytics } = useLeadsAnalytics(id);
   const { data: leadsData } = useLeads(id, { page_size: 1, sort: 'top' });
   const { mutateAsync: restart, isPending: restarting } = useRestartProduct(id);
+  const { mutateAsync: startDisc, isPending: startingDisc } = useStartDiscovery(id);
 
   const handleRestart = async () => {
     try {
@@ -32,6 +33,16 @@ export default function ProductOverviewPage({ params }: { params: { id: string }
       toast.success('Pipeline restarted — check back in a few minutes');
     } catch {
       toast.error('Failed to restart pipeline');
+    }
+  };
+
+  const handleStartDiscovery = async () => {
+    try {
+      await startDisc(50);
+      toast.success('Discovery started — users will appear in a few minutes');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to start discovery';
+      toast.error(msg);
     }
   };
 
@@ -110,6 +121,11 @@ export default function ProductOverviewPage({ params }: { params: { id: string }
     )
     .slice(0, 8);
 
+  // True when a discovery job is already active — suppresses the Start Discovery button.
+  const hasActiveDiscoveryJob = (jobs ?? []).some(
+    j => ['pending', 'running', 'collecting'].includes(j.status)
+  );
+
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       {/* Header */}
@@ -123,6 +139,23 @@ export default function ProductOverviewPage({ params }: { params: { id: string }
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {currentStatus.status === 'similar_products_found' && (
+            hasActiveDiscoveryJob ? (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 text-amber-700 border border-amber-200 text-xs font-semibold rounded-lg">
+                <LoadingSpinner size="sm" />
+                Discovery running...
+              </div>
+            ) : (
+              <button
+                onClick={handleStartDiscovery}
+                disabled={startingDisc}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-xs font-semibold rounded-lg hover:bg-indigo-700 transition disabled:opacity-60"
+              >
+                {startingDisc ? <LoadingSpinner size="sm" /> : <Search size={13} />}
+                Start Discovery
+              </button>
+            )
+          )}
           {currentStatus.status === 'failed' && (
             <button
               onClick={handleRestart}

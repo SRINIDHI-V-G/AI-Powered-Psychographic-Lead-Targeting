@@ -16,9 +16,11 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.models.discovery import DiscoveryJob as DiscoveryJobModel
 from app.crud.discovery import (
     count_discovered_users,
     create_discovery_job,
@@ -168,6 +170,26 @@ async def start_discovery(
             detail=(
                 f"Discovery requires product status to be 'motivations_generated' "
                 f"or later. Current status: {product.status.value}."
+            ),
+        )
+
+    # Prevent duplicate jobs — reject if one is already active for this product.
+    active_r = await db.execute(
+        select(DiscoveryJobModel)
+        .where(
+            DiscoveryJobModel.product_id == product.id,
+            DiscoveryJobModel.status.in_(["pending", "running", "collecting"]),
+        )
+        .limit(1)
+    )
+    active_job = active_r.scalar_one_or_none()
+    if active_job:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"A discovery job is already active "
+                f"(id={active_job.id}, status={active_job.status}). "
+                f"Wait for it to complete before starting a new one."
             ),
         )
 

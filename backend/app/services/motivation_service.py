@@ -27,7 +27,7 @@ from app.crud.motivation import (
     delete_motivations_by_product,
 )
 from app.database import AsyncSessionLocal
-from app.ml.llm_client import OllamaClient
+from app.ml.llm_client import get_llm_client
 from app.ml.motivation_prompter import (
     SYSTEM_PROMPT,
     build_motivation_prompt,
@@ -256,9 +256,9 @@ async def generate_motivations_background(
             logger.info("%s DONE (%d categories, source=%s)", _log, len(categories), source)
 
             # ── 5. Auto-trigger product OCEAN derivation ──────────────────────
-            from app.workers.dispatch import dispatch
-            dispatch("product_ocean", product_id)
-            logger.info("%s dispatched 'product_ocean'", _log)
+            from app.services.product_ocean_service import generate_product_ocean_background
+            await generate_product_ocean_background(product_id)
+            logger.info("%s product_ocean complete", _log)
 
         except Exception as exc:
             full_tb = traceback.format_exc()
@@ -291,11 +291,11 @@ async def _run_llm(product: Product, _log: str) -> tuple[list[dict], str]:
         _log, settings.OLLAMA_BASE_URL, settings.OLLAMA_MODEL,
     )
 
-    client = OllamaClient()
+    client = get_llm_client()
 
     # ── First attempt ─────────────────────────────────────────────────────────
     try:
-        raw = await client.generate(prompt=prompt, system=SYSTEM_PROMPT)
+        raw = await client.generate(prompt=prompt, system=SYSTEM_PROMPT, num_predict=700, num_ctx=1024)
         logger.info("%s Ollama responded (%d chars)", _log, len(raw))
         logger.debug("%s RAW (first 800):\n%s", _log, raw[:800])
 
@@ -314,7 +314,7 @@ async def _run_llm(product: Product, _log: str) -> tuple[list[dict], str]:
         if raw is None:
             raise RuntimeError("Skipping retry — Ollama was unreachable on first attempt")
         raw2 = await client.generate(
-            prompt=prompt, system=SYSTEM_PROMPT, temperature=0.6
+            prompt=prompt, system=SYSTEM_PROMPT, temperature=0.6, num_predict=700, num_ctx=1024
         )
         logger.info(
             "%s retry responded (%d chars)", _log, len(raw2)

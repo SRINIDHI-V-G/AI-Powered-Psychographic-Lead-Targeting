@@ -1,4 +1,4 @@
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 from uuid import UUID
 from datetime import datetime
 from app.models.product import PriceRange, ProductStatus
@@ -28,6 +28,15 @@ class ProductCreate(BaseModel):
         if not v.strip():
             raise ValueError("This field cannot be empty")
         return v.strip()
+
+    @model_validator(mode="after")
+    def infer_target_city(self) -> "ProductCreate":
+        # Auto-parse "Chennai, India" → target_city="Chennai" when not explicitly provided
+        if not self.target_city and self.target_location and "," in self.target_location:
+            parts = [p.strip() for p in self.target_location.split(",")]
+            if parts[0]:
+                self.target_city = parts[0]
+        return self
 
 
 class ProductResponse(BaseModel):

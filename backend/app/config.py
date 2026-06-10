@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     USE_MOCK_LLM: bool = False
     FALLBACK_TO_MOCK_ON_ERROR: bool = False
 
+    # ── Groq (optional fast LLM backend) ─────────────────────────────────────
+    # When GROQ_API_KEY is set, all LLM calls use Groq instead of Ollama.
+    # ~800 tok/s vs ~15-20 tok/s locally — effectively eliminates LLM latency.
+    # Get a free key at https://console.groq.com
+    GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "llama-3.1-8b-instant"
+
     # ── Reddit Discovery ──────────────────────────────────────────────────────
     # Uses the public JSON API — no OAuth required.
     # CLIENT_ID and CLIENT_SECRET are kept for backward compatibility but ignored.
@@ -92,6 +99,21 @@ class Settings(BaseSettings):
     DISCOVERY_MAX_USERS: int = 150
     DISCOVERY_CONTENT_PER_USER: int = 15
     DISCOVERY_CONTENT_BATCH_SIZE: int = 20
+
+    # Users fetched when the pipeline auto-triggers discovery (no user interaction).
+    # Lower = faster demo. Raise for richer lead pools in production.
+    AUTO_DISCOVERY_MAX_USERS: int = 15
+
+    # ── Discovery concurrency + reliability ───────────────────────────────────
+    # Maximum discovery jobs that may be running simultaneously.
+    # Excess auto-triggered jobs are queued as "pending" and started when a
+    # slot opens — prevents simultaneous provider API calls from hitting rate limits.
+    DISCOVERY_MAX_CONCURRENT_JOBS: int = 2
+
+    # Jobs that remain status="running" or "collecting" for longer than this
+    # many minutes are considered orphaned (server crash / restart killed the
+    # task). The startup watchdog marks them "failed" automatically.
+    DISCOVERY_STALE_JOB_TIMEOUT_MINUTES: int = 60
 
     # YouTube-specific discovery limits
     # Videos searched per keyword × max_results_per_video × comment density = user volume.

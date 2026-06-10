@@ -15,26 +15,39 @@ def build_motivation_prompt(product: dict) -> str:
     description = product["description"]
 
     return (
-        "You are analyzing a product to identify 5 distinct psychographic buyer types.\n\n"
+        "You are analyzing a product to identify 5 distinct psychographic BUYER types.\n\n"
         f"Product Name: {name}\n"
         f"Category: {category}\n"
         f"Price Range: {price_range}\n"
         f"Description: {description}\n\n"
         "Generate exactly 5 motivation categories. "
         "Each category is a different psychological reason WHY someone buys this product.\n\n"
+        "CRITICAL RULE for search_keywords:\n"
+        "These must be phrases that BUYERS use when talking about their LIFESTYLE, PROBLEMS, "
+        "and INTERESTS — NOT phrases that describe the product itself.\n"
+        "The goal is to find communities of potential customers online, not product sellers.\n"
+        "NEVER include the product name, product category, or brand names in search_keywords.\n"
+        "Instead, think: what does this buyer type talk about, search for, or post about "
+        "on YouTube and Instagram BEFORE they decide to buy this product?\n\n"
+        f"Example for '{name}':\n"
+        "  BAD search_keywords (finds sellers): "
+        f'["{name.lower()}", "{category} review", "best {category}"]\n'
+        "  GOOD search_keywords (finds buyers): lifestyle topics, pain points, "
+        "communities this buyer belongs to, hobbies and interests related to WHY they buy.\n\n"
         "Rules:\n"
         "- Output ONLY raw JSON. No markdown. No code blocks. No backticks. No explanation.\n"
         "- Start your response with { and end with }\n"
         "- All OCEAN scores must be floats between 0.0 and 10.0\n\n"
         'Required JSON format (replace example values with real content):\n'
         '{"motivation_categories": ['
-        '{"name": "short category name", '
-        '"description": "1-2 sentences about this buyer", '
+        '{"name": "short buyer persona name", '
+        '"description": "1-2 sentences about this buyer and their motivation", '
         '"ocean": {"openness": 7.5, "conscientiousness": 6.0, "extraversion": 5.5, '
         '"agreeableness": 6.5, "emotional_stability": 7.0}, '
-        '"interest_tags": ["tag1", "tag2", "tag3"], '
-        '"search_keywords": ["kw1", "kw2", "kw3", "kw4", "kw5"], '
-        '"hashtags": ["#tag1", "#tag2", "#tag3"]}'
+        '"interest_tags": ["lifestyle tag1", "lifestyle tag2", "lifestyle tag3"], '
+        '"search_keywords": ["buyer lifestyle query1", "buyer lifestyle query2", '
+        '"buyer pain point query3", "buyer interest query4", "buyer community query5"], '
+        '"hashtags": ["#lifestyle1", "#interest2", "#community3"]}'
         "]}"
     )
 

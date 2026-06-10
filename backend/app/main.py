@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -40,6 +41,24 @@ logger = logging.getLogger(__name__)
 _EXPECTED_REVISION = "b2c3d4e5f6a7"
 
 
+async def _discovery_watchdog() -> None:
+    """
+    Periodic background task: detects and recovers stale discovery jobs.
+
+    Wakes every DISCOVERY_STALE_JOB_TIMEOUT_MINUTES / 2 minutes and calls
+    recover_stale_jobs(). This covers jobs that become stale AFTER startup
+    (e.g. a job that starts, then the process hangs without a full restart).
+    """
+    from app.services.discovery_service import recover_stale_jobs
+    interval = max(60, settings.DISCOVERY_STALE_JOB_TIMEOUT_MINUTES * 30)  # half-timeout in seconds
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            await recover_stale_jobs()
+        except Exception as exc:
+            logger.warning("[watchdog] stale-job sweep failed: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Verify the database is reachable and migrations are at head.
@@ -74,7 +93,24 @@ async def lifespan(app: FastAPI):
         )
 
     warn_missing_credentials()
+
+    # ── Orphan recovery: mark stale jobs failed and re-queue them ─────────────
+    try:
+        from app.services.discovery_service import recover_stale_jobs
+        await recover_stale_jobs()
+    except Exception as exc:
+        logger.warning("Startup stale-job recovery failed (non-fatal): %s", exc)
+
+    # ── Periodic watchdog: catches jobs that go stale after startup ───────────
+    watchdog_task = asyncio.create_task(_discovery_watchdog())
+
     yield
+
+    watchdog_task.cancel()
+    try:
+        await watchdog_task
+    except asyncio.CancelledError:
+        pass
     await engine.dispose()
 
 

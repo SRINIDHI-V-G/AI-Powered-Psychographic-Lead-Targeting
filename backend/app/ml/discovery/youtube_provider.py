@@ -119,6 +119,10 @@ class YouTubeProvider(BaseDiscoveryProvider):
         max_videos_per_kw = settings.YOUTUBE_MAX_VIDEOS_PER_KEYWORD
         max_comments_per_video = settings.YOUTUBE_MAX_COMMENTS_PER_VIDEO
 
+        # Resolve region code for location-filtered search
+        region_code = _resolve_region_code(target_city)
+        relevance_language = _resolve_language(target_city)
+
         seen_channel_ids: set[str] = set()
         result: list[RawDiscoveredUser] = []
 
@@ -130,7 +134,12 @@ class YouTubeProvider(BaseDiscoveryProvider):
                 break
 
             try:
-                video_ids = await self._search_videos(keyword, max_results=max_videos_per_kw)
+                video_ids = await self._search_videos(
+                    keyword,
+                    max_results=max_videos_per_kw,
+                    region_code=region_code,
+                    relevance_language=relevance_language,
+                )
             except Exception as exc:
                 logger.warning("YouTubeProvider: search failed for %r: %s", keyword, exc)
                 continue
@@ -269,9 +278,15 @@ class YouTubeProvider(BaseDiscoveryProvider):
         resp.raise_for_status()
         return resp.json()
 
-    async def _search_videos(self, keyword: str, max_results: int = 10) -> list[str]:
+    async def _search_videos(
+        self,
+        keyword: str,
+        max_results: int = 10,
+        region_code: str | None = None,
+        relevance_language: str | None = None,
+    ) -> list[str]:
         """Search YouTube for videos matching `keyword`. Returns list of video IDs."""
-        data = await self._get("/search", {
+        params: dict = {
             "part": "id",
             "q": keyword,
             "type": "video",
@@ -279,7 +294,16 @@ class YouTubeProvider(BaseDiscoveryProvider):
             "order": "relevance",
             "videoEmbeddable": "true",
             "safeSearch": "none",
-        })
+        }
+        # Restrict results to a geographic region when available.
+        # regionCode (ISO 3166-1 alpha-2) biases results toward videos popular in that country.
+        if region_code:
+            params["regionCode"] = region_code
+        # relevanceLanguage biases toward content in that language.
+        if relevance_language:
+            params["relevanceLanguage"] = relevance_language
+
+        data = await self._get("/search", params)
         return [item["id"]["videoId"] for item in data.get("items", [])]
 
     async def _get_comments(self, video_id: str, max_results: int = 50) -> list[dict]:
@@ -333,6 +357,57 @@ class YouTubeProvider(BaseDiscoveryProvider):
             c for c in all_comments
             if c.get("author_channel_id") == author_channel_id
         ][:max_results]
+
+
+# ── Region / language resolution ─────────────────────────────────────────────
+
+# Maps city or country name fragments → ISO 3166-1 alpha-2 country code.
+# Used to set YouTube's regionCode parameter so search results are biased
+# toward videos popular in that country.
+_COUNTRY_TO_ISO: dict[str, str] = {
+    "india": "IN", "indian": "IN",
+    "chennai": "IN", "bangalore": "IN", "bengaluru": "IN",
+    "mumbai": "IN", "delhi": "IN", "hyderabad": "IN", "kolkata": "IN",
+    "pune": "IN", "ahmedabad": "IN", "jaipur": "IN", "surat": "IN",
+    "us": "US", "usa": "US", "united states": "US", "america": "US",
+    "uk": "GB", "united kingdom": "GB", "britain": "GB", "england": "GB",
+    "australia": "AU", "canada": "CA", "germany": "DE",
+    "singapore": "SG", "malaysia": "MY", "uae": "AE", "dubai": "AE",
+}
+
+# Maps region → BCP-47 language code for relevanceLanguage
+_CITY_TO_LANGUAGE: dict[str, str] = {
+    "chennai": "ta",       # Tamil
+    "india": "hi",         # Hindi (default for India)
+    "bangalore": "kn",     # Kannada
+    "bengaluru": "kn",
+    "kolkata": "bn",       # Bengali
+    "mumbai": "mr",        # Marathi (or hi)
+    "delhi": "hi",
+    "hyderabad": "te",     # Telugu
+}
+
+
+def _resolve_region_code(target_city: str | None) -> str | None:
+    """Return ISO country code for YouTube regionCode, or None for global search."""
+    if not target_city:
+        return None
+    key = target_city.strip().lower()
+    return _COUNTRY_TO_ISO.get(key)
+
+
+def _resolve_language(target_city: str | None) -> str | None:
+    """Return BCP-47 language code for YouTube relevanceLanguage, or None."""
+    if not target_city:
+        return None
+    key = target_city.strip().lower()
+    # Check city-specific language first, fall back to country
+    if key in _CITY_TO_LANGUAGE:
+        return _CITY_TO_LANGUAGE[key]
+    # If it's an Indian city, default to Hindi
+    if _COUNTRY_TO_ISO.get(key) == "IN":
+        return "hi"
+    return None
 
 
 # ── Location inference ────────────────────────────────────────────────────────

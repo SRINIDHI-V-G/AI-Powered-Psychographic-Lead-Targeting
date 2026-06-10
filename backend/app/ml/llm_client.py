@@ -21,6 +21,7 @@ class OllamaClient:
         model: str | None = None,
         temperature: float = 0.3,
         num_predict: int = 700,
+        num_ctx: int = 2048,
     ) -> str:
         """
         Send a prompt to Ollama and return the raw response string.
@@ -39,7 +40,7 @@ class OllamaClient:
             "options": {
                 "temperature": temperature,
                 "num_predict": num_predict,
-                "num_ctx": 2048,
+                "num_ctx": num_ctx,
             },
         }
         url = f"{self.base_url}/api/generate"
@@ -106,3 +107,119 @@ class OllamaClient:
                 "available_models": [],
                 "error": str(exc),
             }
+
+
+class GroqClient:
+    """
+    Drop-in replacement for OllamaClient using Groq's OpenAI-compatible API.
+    ~800 tokens/sec vs Ollama's ~15-20 tokens/sec — ~40x faster for LLM steps.
+    Active when GROQ_API_KEY is set in .env; falls back to OllamaClient otherwise.
+    """
+
+    _API_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+    def __init__(self) -> None:
+        self.api_key = settings.GROQ_API_KEY
+        self.model = settings.GROQ_MODEL
+        self.timeout = 60.0
+
+    async def generate(
+        self,
+        prompt: str,
+        system: str,
+        model: str | None = None,
+        temperature: float = 0.3,
+        num_predict: int = 700,
+        num_ctx: int = 2048,  # ignored by Groq API — accepted for interface compat
+    ) -> str:
+        """
+        Send a chat completion request to Groq and return the response text.
+        Interface is identical to OllamaClient.generate().
+
+        Raises:
+            ConnectionError – Groq API is not reachable.
+            TimeoutError    – Request exceeded timeout.
+            RuntimeError    – Groq returned a non-2xx HTTP status or rate limit.
+        """
+        resolved_model = model or self.model
+        payload = {
+            "model": resolved_model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": temperature,
+            "max_tokens": num_predict,
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        logger.debug("Groq request → model=%s", resolved_model)
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    self._API_URL, json=payload, headers=headers
+                )
+                response.raise_for_status()
+                text = response.json()["choices"][0]["message"]["content"]
+                logger.debug("Groq response ← %d chars", len(text))
+                return text
+
+        except httpx.ConnectError as exc:
+            raise ConnectionError(
+                f"Cannot reach Groq API at {self._API_URL}."
+            ) from exc
+
+        except httpx.TimeoutException as exc:
+            raise TimeoutError(
+                f"Groq timed out after {self.timeout}s (model={resolved_model})."
+            ) from exc
+
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            body = exc.response.text[:300]
+            if status == 429:
+                raise RuntimeError(f"Groq rate limit hit: {body}") from exc
+            raise RuntimeError(f"Groq HTTP {status}: {body}") from exc
+
+    async def health_check(self) -> dict:
+        """Ping Groq by listing available models."""
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                r = await client.get(
+                    "https://api.groq.com/openai/v1/models",
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                )
+                r.raise_for_status()
+                models = [m["id"] for m in r.json().get("data", [])]
+                return {
+                    "reachable": True,
+                    "provider": "groq",
+                    "configured_model": self.model,
+                    "model_available": self.model in models,
+                    "available_models": models,
+                    "error": None,
+                }
+        except Exception as exc:
+            return {
+                "reachable": False,
+                "provider": "groq",
+                "configured_model": self.model,
+                "model_available": False,
+                "available_models": [],
+                "error": str(exc),
+            }
+
+
+def get_llm_client() -> OllamaClient | GroqClient:
+    """
+    Return the active LLM client.
+    Groq is used when GROQ_API_KEY is set; otherwise falls back to Ollama.
+    """
+    if settings.GROQ_API_KEY:
+        logger.debug("LLM backend: Groq (model=%s)", settings.GROQ_MODEL)
+        return GroqClient()
+    logger.debug("LLM backend: Ollama (model=%s)", settings.OLLAMA_MODEL)
+    return OllamaClient()

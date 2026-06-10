@@ -361,9 +361,12 @@ async def start_matching_background(product_id: str) -> None:
                 _log, summary["processed"], summary["failed"],
             )
 
-            # Advance to handle discovery
-            from app.workers.dispatch import dispatch
-            dispatch("handles", product_id)
+            # Fire handle discovery as a separate background task — it's post-ranking
+            # enrichment and should not block the pipeline or keep the event loop busy.
+            # Product is already 'ranked' at this point (user-visible final state).
+            import asyncio as _asyncio_handles
+            from app.services.handle_service import generate_handles_background
+            _asyncio_handles.create_task(generate_handles_background(product_id))
 
         except Exception as exc:
             tb = traceback.format_exc()

@@ -31,26 +31,29 @@ logger = logging.getLogger(__name__)
 # Lazy import map to avoid circular imports at module load time.
 # Each key is a logical stage name; value is a (module, async_fn_name) pair.
 _ASYNC_FUNCTIONS: dict[str, tuple[str, str]] = {
-    "motivations":    ("app.services.motivation_service",        "generate_motivations_background"),
-    "product_ocean":  ("app.services.product_ocean_service",     "generate_product_ocean_background"),
-    "similar_products": ("app.services.product_similarity_service", "generate_similar_products_background"),
-    "discovery":      ("app.services.discovery_service",         "start_discovery_background"),
-    "nlp":            ("app.services.nlp_service",               "start_nlp_background"),
-    "ocean":          ("app.services.ocean_service",             "start_ocean_background"),
-    "matching":       ("app.services.matching_service",          "start_matching_background"),
-    "handles":        ("app.services.handle_service",            "generate_handles_background"),
+    "motivations":      ("app.services.motivation_service",        "generate_motivations_background"),
+    "product_ocean":    ("app.services.product_ocean_service",     "generate_product_ocean_background"),
+    "similar_products": ("app.services.product_similarity_service","generate_similar_products_background"),
+    "discovery":        ("app.services.discovery_service",         "start_discovery_background"),
+    # auto_discovery is the pipeline-internal trigger (creates job then runs discovery)
+    "auto_discovery":   ("app.services.discovery_service",         "auto_start_discovery"),
+    "nlp":              ("app.services.nlp_service",               "start_nlp_background"),
+    "ocean":            ("app.services.ocean_service",             "start_ocean_background"),
+    "matching":         ("app.services.matching_service",          "start_matching_background"),
+    "handles":          ("app.services.handle_service",            "generate_handles_background"),
 }
 
 # Celery task map: same keys, resolved lazily.
 _CELERY_TASKS: dict[str, tuple[str, str]] = {
-    "motivations":    ("app.workers.tasks.product_tasks",     "generate_motivations_task"),
-    "product_ocean":  ("app.workers.tasks.product_ocean_tasks", "run_product_ocean_task"),
-    "similar_products": ("app.workers.tasks.similarity_tasks", "run_similarity_task"),
-    "discovery":      ("app.workers.tasks.discovery_tasks",   "run_discovery_task"),
-    "nlp":            ("app.workers.tasks.nlp_tasks",         "run_nlp_task"),
-    "ocean":          ("app.workers.tasks.scoring_tasks",     "run_ocean_scoring_task"),
-    "matching":       ("app.workers.tasks.matching_tasks",    "run_matching_task"),
-    "handles":        ("app.workers.tasks.handle_tasks",      "run_handle_task"),
+    "motivations":      ("app.workers.tasks.product_tasks",       "generate_motivations_task"),
+    "product_ocean":    ("app.workers.tasks.product_ocean_tasks", "run_product_ocean_task"),
+    "similar_products": ("app.workers.tasks.similarity_tasks",    "run_similarity_task"),
+    "discovery":        ("app.workers.tasks.discovery_tasks",     "run_discovery_task"),
+    "auto_discovery":   ("app.workers.tasks.discovery_tasks",     "run_discovery_task"),
+    "nlp":              ("app.workers.tasks.nlp_tasks",           "run_nlp_task"),
+    "ocean":            ("app.workers.tasks.scoring_tasks",       "run_ocean_scoring_task"),
+    "matching":         ("app.workers.tasks.matching_tasks",      "run_matching_task"),
+    "handles":          ("app.workers.tasks.handle_tasks",        "run_handle_task"),
 }
 
 
