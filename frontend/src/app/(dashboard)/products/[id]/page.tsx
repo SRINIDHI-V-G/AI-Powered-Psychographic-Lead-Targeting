@@ -22,9 +22,8 @@ export default function ProductOverviewPage({ params }: { params: { id: string }
   const { data: jobs } = useDiscoveryJobs(id);
   const { data: platformStats } = usePlatformStats(id);
   // Fallback for platform breakdown: fetch actual discovered users and count client-side.
-  // Uses the existing /discovery/users endpoint — no new backend endpoint required.
-  // limit=500 covers real-world campaign sizes; platformStats takes over once backend restarts.
-  const { data: discoveredUsersPage } = useDiscoveredUsers(id, { limit: 500 });
+  // Uses the existing /discovery/users endpoint — backend cap is le=200.
+  const { data: discoveredUsersPage } = useDiscoveredUsers(id, { limit: 200 });
   const { data: oceanStatus } = useOceanStatus(id);
   const { data: motivations } = useMotivations(id);
   const { data: analytics } = useLeadsAnalytics(id);

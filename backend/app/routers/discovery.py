@@ -291,7 +291,7 @@ async def list_discovered_users(
     product_id: UUID,
     job_id: UUID | None = Query(default=None, description="Filter by specific job"),
     page: int = Query(default=1, ge=1),
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(default=50, ge=1, le=500),
     company: Company = Depends(get_current_company),
     db: AsyncSession = Depends(get_db),
 ) -> DiscoveredUserListResponse:
