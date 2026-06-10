@@ -45,9 +45,20 @@ export default function DiscoveryPage({ params }: { params: { id: string } }) {
     sort: 'top',
   });
 
-  // Per-platform counts from DiscoveredUser table — accurate even for multi-provider jobs
+  // Filter pills: use accurate per-platform data when available; fall back to
+  // unique platforms observed in the currently loaded leads page.
   const activePlatforms = (platformStats ?? []).filter(s => s.count > 0);
-  const totalDiscovered = activePlatforms.reduce((a, b) => a + b.count, 0);
+  const fallbackPlatforms: { platform: string; count: number }[] = activePlatforms.length === 0
+    ? [...new Map(
+        (data?.leads ?? []).map(l => l.platform.toLowerCase())
+          .map(p => [p, (data?.leads ?? []).filter(l => l.platform.toLowerCase() === p).length])
+      ).entries()]
+        .map(([platform, count]) => ({ platform, count }))
+    : [];
+  const displayPlatforms = activePlatforms.length > 0 ? activePlatforms : fallbackPlatforms;
+  const totalDiscovered = activePlatforms.length > 0
+    ? activePlatforms.reduce((a, b) => a + b.count, 0)
+    : data?.total_leads ?? 0;
 
   const filtered = platformFilter
     ? (data?.leads ?? []).filter(l => l.platform.toLowerCase() === platformFilter)
@@ -74,7 +85,7 @@ export default function DiscoveryPage({ params }: { params: { id: string } }) {
           >
             All
           </button>
-          {activePlatforms.map(({ platform, count }) => {
+          {displayPlatforms.map(({ platform, count }) => {
             const active = platformFilter === platform;
             const brandColor = getProviderColor(platform);
             return (

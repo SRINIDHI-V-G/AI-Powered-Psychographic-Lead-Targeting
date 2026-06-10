@@ -57,17 +57,40 @@ export default function ProductOverviewPage({ params }: { params: { id: string }
   const currentStatus = status ?? product;
   const isPipelineComplete = ['ranked', 'completed'].includes(currentStatus.status);
 
-  // ── Discovery sources — accurate per-platform counts from DiscoveredUser table ─
+  // ── Discovery sources ────────────────────────────────────────────────────────
+  // Total from completed jobs (always reliable — job records users_discovered count)
+  const totalDiscovered = (jobs ?? [])
+    .filter(j => j.status === 'completed')
+    .reduce((a, j) => a + j.users_discovered, 0);
+
+  // Chart: use accurate per-platform data when the /platform-stats endpoint responds;
+  // fall back to splitting provider_name by '+' so the chart always shows data.
   const activePlatforms = (platformStats ?? []).filter(s => s.count > 0);
-  const totalDiscovered = activePlatforms.reduce((a, b) => a + b.count, 0);
-  const sourceLabels = activePlatforms
-    .map(s => s.platform.charAt(0).toUpperCase() + s.platform.slice(1))
-    .join(' · ');
-  const sourceDonut = activePlatforms.map(s => ({
-    name: s.platform.charAt(0).toUpperCase() + s.platform.slice(1),
-    value: s.count,
-    color: getProviderColor(s.platform),
-  }));
+  let sourceDonut: { name: string; value: number; color: string }[];
+  if (activePlatforms.length > 0) {
+    sourceDonut = activePlatforms.map(s => ({
+      name: s.platform.charAt(0).toUpperCase() + s.platform.slice(1),
+      value: s.count,
+      color: getProviderColor(s.platform),
+    }));
+  } else {
+    // Fallback: split provider_name by '+' and distribute users_discovered evenly.
+    // Inaccurate for mixed multi-provider jobs but always shows something.
+    const fallbackMap: Record<string, number> = {};
+    (jobs ?? []).forEach(j => {
+      if (j.status === 'completed' && j.users_discovered > 0) {
+        const providers = (j.provider_name ?? '').split('+').map(p => p.trim().toLowerCase()).filter(Boolean);
+        const share = Math.round(j.users_discovered / (providers.length || 1));
+        providers.forEach(p => { fallbackMap[p] = (fallbackMap[p] ?? 0) + share; });
+      }
+    });
+    sourceDonut = Object.entries(fallbackMap).map(([k, v]) => ({
+      name: k.charAt(0).toUpperCase() + k.slice(1),
+      value: v,
+      color: getProviderColor(k),
+    }));
+  }
+  const sourceLabels = sourceDonut.map(s => s.name).join(' · ');
 
   // ── Real tier counts from API ────────────────────────────────────────────────
   const hotCount = matchStatus?.hot ?? 0;
