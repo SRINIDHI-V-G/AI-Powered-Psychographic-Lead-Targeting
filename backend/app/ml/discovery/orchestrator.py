@@ -433,8 +433,30 @@ class DiscoveryOrchestrator:
                 ]
                 _min_users = max(5, (job.max_users or 50) // 3)
                 if len(_confirmed) >= _min_users:
-                    # Enough confirmed users — drop unknowns
-                    all_raw_with_provider = _confirmed
+                    # Enough confirmed users — prefer them. But guarantee every
+                    # provider that contributed raw users still adds a minimum
+                    # share: YouTube/Reddit commenters rarely expose their city
+                    # in comments even when they are local buyers, so a hard
+                    # "drop all unknowns" would silently zero out entire platforms.
+                    _confirmed_provider_names = {p.name for _, p in _confirmed}
+                    _supplement: list = []
+                    # Each absent provider gets up to 25 % of the job cap
+                    _floor = max(3, (job.max_users or 50) // 4)
+                    _supplement_counts: dict[str, int] = {}
+                    for _raw, _prov in _unknown:
+                        if _prov.name not in _confirmed_provider_names:
+                            _cnt = _supplement_counts.get(_prov.name, 0)
+                            if _cnt < _floor:
+                                _supplement.append((_raw, _prov))
+                                _supplement_counts[_prov.name] = _cnt + 1
+                    all_raw_with_provider = _confirmed + _supplement
+                    if _supplement:
+                        logger.info(
+                            "%s location filter: supplemented %d users from "
+                            "providers absent in confirmed set: %s",
+                            _log, len(_supplement),
+                            {k: v for k, v in _supplement_counts.items()},
+                        )
                 else:
                     # Not enough confirmed — pad with some unknowns to keep pool viable
                     _fill = max(0, _min_users - len(_confirmed))
