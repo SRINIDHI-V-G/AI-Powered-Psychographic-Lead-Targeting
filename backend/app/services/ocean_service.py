@@ -237,6 +237,7 @@ async def run_ocean_for_product(db: AsyncSession, product_id: UUID) -> dict:
             DiscoveredUser.product_id == product_id,
             DiscoveredUser.nlp_processed == True,   # noqa: E712
             DiscoveredUser.ocean_scored == False,    # noqa: E712
+            DiscoveredUser.pipeline_excluded == False,  # noqa: E712  skip business/competitor accounts
         )
     )
     user_ids = [row[0] for row in result.fetchall()]

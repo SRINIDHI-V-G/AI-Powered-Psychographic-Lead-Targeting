@@ -16,11 +16,12 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from pydantic import BaseModel
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models.discovery import DiscoveryJob as DiscoveryJobModel
+from app.models.discovery import DiscoveredUser, DiscoveryJob as DiscoveryJobModel
 from app.crud.discovery import (
     count_discovered_users,
     create_discovery_job,
@@ -46,6 +47,39 @@ from app.schemas.discovery import (
 from app.services.discovery_service import start_discovery_background
 
 router = APIRouter(tags=["Discovery"])
+
+
+class PlatformBreakdown(BaseModel):
+    platform: str
+    count: int
+
+
+# ── Platform stats ────────────────────────────────────────────────────────────
+
+@router.get(
+    "/products/{product_id}/discovery/platform-stats",
+    response_model=list[PlatformBreakdown],
+    summary="Per-platform discovered user counts",
+    description="Returns the number of discovered users grouped by their actual platform (youtube, instagram, etc.). Use this for the Discovery Sources chart instead of provider_name.",
+)
+async def get_platform_stats(
+    product_id: UUID,
+    company: Company = Depends(get_current_company),
+    db: AsyncSession = Depends(get_db),
+) -> list[PlatformBreakdown]:
+    product = await get_product_by_id(db, product_id, company.id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found.")
+    result = await db.execute(
+        select(DiscoveredUser.platform, func.count().label("cnt"))
+        .where(DiscoveredUser.product_id == product_id)
+        .group_by(DiscoveredUser.platform)
+    )
+    return [
+        PlatformBreakdown(platform=row.platform, count=int(row.cnt))
+        for row in result
+        if row.cnt > 0
+    ]
 
 
 # ── Provider health (unauthenticated) ─────────────────────────────────────────

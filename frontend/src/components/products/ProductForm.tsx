@@ -17,7 +17,6 @@ const schema = z.object({
   target_location: z.string().min(1, 'Target location is required'),
   target_city: z.string().optional(),
   target_country: z.string().optional(),
-  keywords_raw: z.string().optional(),
 });
 
 type FormData = z.infer<typeof schema>;
@@ -36,9 +35,6 @@ export function ProductForm() {
   });
 
   const onSubmit = async (data: FormData) => {
-    const keywords = data.keywords_raw
-      ? data.keywords_raw.split(',').map((k) => k.trim()).filter(Boolean)
-      : [];
     try {
       const product = await mutateAsync({
         name: data.name,
@@ -49,7 +45,6 @@ export function ProductForm() {
         target_location: data.target_location,
         target_city: data.target_city,
         target_country: data.target_country,
-        keywords,
       });
       toast.success('Product created! Pipeline starting...');
       router.push(`/products/${product.id}`);
@@ -127,13 +122,6 @@ export function ProductForm() {
         {field('target_location', 'Target Location', 'text', 'e.g. Chennai, India  or  Mumbai, India  or  Bangalore, India')}
         <p className="text-xs text-slate-400 mt-1">Use "City, Country" format for precise location filtering</p>
       </div>
-
-      {field(
-        'keywords_raw',
-        'Keywords (comma-separated)',
-        'text',
-        'e.g. music, productivity, travel'
-      )}
 
       <button
         type="submit"

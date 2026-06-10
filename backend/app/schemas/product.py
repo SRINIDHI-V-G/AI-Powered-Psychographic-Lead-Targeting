@@ -13,7 +13,6 @@ class ProductCreate(BaseModel):
     target_location: str
     target_city: str | None = None
     target_country: str = "India"
-    keywords: list[str] = []
 
     @field_validator("description")
     @classmethod

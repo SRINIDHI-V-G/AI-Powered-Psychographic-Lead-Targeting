@@ -11,7 +11,8 @@ interface ProductCardProps {
 }
 
 export function ProductCard({ product }: ProductCardProps) {
-  const pct = Math.round((product.pipeline_step / 9) * 100);
+  const displayStep = Math.min(product.pipeline_step, 9);
+  const pct = Math.round((displayStep / 9) * 100);
 
   return (
     <Link
@@ -41,7 +42,7 @@ export function ProductCard({ product }: ProductCardProps) {
           style={{ width: `${pct}%` }}
         />
       </div>
-      <p className="text-xs text-slate-400 mt-1 text-right">Step {product.pipeline_step} / 9</p>
+      <p className="text-xs text-slate-400 mt-1 text-right">Step {displayStep} / 9</p>
 
       {product.keywords.length > 0 && (
         <div className="flex flex-wrap gap-1 mt-3">

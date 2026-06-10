@@ -68,7 +68,6 @@ export interface ProductCreateInput {
   target_location?: string;
   target_city?: string;
   target_country?: string;
-  keywords: string[];
 }
 
 // ─── Dashboard ───────────────────────────────────────────────────────────────
@@ -93,6 +92,11 @@ export interface ActivityEvent {
 export interface ProviderBreakdown {
   provider: string;       // "reddit" | "instagram" | "youtube" | "mock"
   users_discovered: number;
+}
+
+export interface PlatformBreakdown {
+  platform: string;
+  count: number;
 }
 
 export interface DashboardOverview {

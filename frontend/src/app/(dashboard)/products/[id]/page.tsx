@@ -3,7 +3,7 @@
 import { useProduct, useProductStatus, useRestartProduct } from '@/lib/hooks/useProducts';
 import { useMatchStatus } from '@/lib/hooks/useLeads';
 import { useLeadsAnalytics } from '@/lib/hooks/useAnalytics';
-import { useDiscoveryJobs, useStartDiscovery } from '@/lib/hooks/useDiscovery';
+import { useDiscoveryJobs, usePlatformStats, useStartDiscovery } from '@/lib/hooks/useDiscovery';
 import { useOceanStatus } from '@/lib/hooks/useOceanStatus';
 import { useMotivations } from '@/lib/hooks/useMotivations';
 import { useLeads } from '@/lib/hooks/useLeads';
@@ -20,6 +20,7 @@ export default function ProductOverviewPage({ params }: { params: { id: string }
   const { data: status } = useProductStatus(id);
   const { data: matchStatus } = useMatchStatus(id);
   const { data: jobs } = useDiscoveryJobs(id);
+  const { data: platformStats } = usePlatformStats(id);
   const { data: oceanStatus } = useOceanStatus(id);
   const { data: motivations } = useMotivations(id);
   const { data: analytics } = useLeadsAnalytics(id);
@@ -56,21 +57,16 @@ export default function ProductOverviewPage({ params }: { params: { id: string }
   const currentStatus = status ?? product;
   const isPipelineComplete = ['ranked', 'completed'].includes(currentStatus.status);
 
-  // ── Discovery sources (fully dynamic — no provider names hardcoded) ─────────
-  const sourceMap: Record<string, number> = {};
-  (jobs ?? []).forEach((j) => {
-    if (j.status === 'completed' && j.provider_name) {
-      sourceMap[j.provider_name] = (sourceMap[j.provider_name] ?? 0) + j.users_discovered;
-    }
-  });
-  const totalDiscovered = Object.values(sourceMap).reduce((a, b) => a + b, 0);
-  const sourceLabels = Object.keys(sourceMap)
-    .map(k => k.charAt(0).toUpperCase() + k.slice(1))
+  // ── Discovery sources — accurate per-platform counts from DiscoveredUser table ─
+  const activePlatforms = (platformStats ?? []).filter(s => s.count > 0);
+  const totalDiscovered = activePlatforms.reduce((a, b) => a + b.count, 0);
+  const sourceLabels = activePlatforms
+    .map(s => s.platform.charAt(0).toUpperCase() + s.platform.slice(1))
     .join(' · ');
-  const sourceDonut = Object.entries(sourceMap).map(([k, v]) => ({
-    name: k.charAt(0).toUpperCase() + k.slice(1),
-    value: v,
-    color: getProviderColor(k),
+  const sourceDonut = activePlatforms.map(s => ({
+    name: s.platform.charAt(0).toUpperCase() + s.platform.slice(1),
+    value: s.count,
+    color: getProviderColor(s.platform),
   }));
 
   // ── Real tier counts from API ────────────────────────────────────────────────
@@ -212,6 +208,25 @@ export default function ProductOverviewPage({ params }: { params: { id: string }
           color="text-indigo-600"
         />
       </div>
+
+      {/* Generated keywords — read-only, shown once AI has populated them */}
+      {product.keywords && product.keywords.length > 0 && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-4">
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2.5">
+            AI-Generated Keywords
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {product.keywords.map((kw) => (
+              <span
+                key={kw}
+                className="px-2.5 py-1 rounded-full text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-100"
+              >
+                {kw}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Charts row */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

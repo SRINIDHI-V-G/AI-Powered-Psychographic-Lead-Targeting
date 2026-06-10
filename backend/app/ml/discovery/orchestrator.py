@@ -503,7 +503,25 @@ class DiscoveryOrchestrator:
                     _log, job.users_content_collected, len(persisted_users),
                 )
 
-            # ── 7. Mark job complete ──────────────────────────────────────────
+            # ── 7. Classify discovered users ──────────────────────────────────
+            # Runs before NLP so that business/competitor accounts are flagged
+            # as pipeline_excluded=True. NLP, OCEAN, and matching skip them.
+            # UNKNOWN accounts pass through but receive a score penalty in
+            # matching.
+            from app.services.classification_service import classify_job_users
+            classification_summary = await classify_job_users(job.id, db)
+            logger.info(
+                "%s classification done — buyers=%d excluded=%d "
+                "(businesses=%d competitors=%d) unknown=%d",
+                _log,
+                classification_summary["buyers"],
+                classification_summary["excluded"],
+                classification_summary["businesses"],
+                classification_summary["competitors"],
+                classification_summary["unknown"],
+            )
+
+            # ── 8. Mark job complete ──────────────────────────────────────────
             # product.status was already set to "discovering" (step 5) at the
             # start of this run so the UI shows progress immediately.
             job.status = "completed"
@@ -515,7 +533,7 @@ class DiscoveryOrchestrator:
                 _log, tried_names, job.users_discovered, job.users_content_collected,
             )
 
-            # ── 8. Auto-trigger NLP — fires if any provider collected content ──
+            # ── 9. Auto-trigger NLP — fires if any provider collected content ──
             if job.users_content_collected > 0:
                 from app.services.nlp_service import start_nlp_background
                 logger.info(

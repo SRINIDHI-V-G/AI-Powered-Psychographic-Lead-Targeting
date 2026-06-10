@@ -142,6 +142,15 @@ async def _compute_user_matches(
         )
         reasons = build_reasoning(ocean_s, embed_s, interest_s, user_tags, motiv_tags, cat.name)
 
+        # UNKNOWN accounts: reduce score 25% and flag for manual review.
+        # They pass through NLP/OCEAN but are deprioritised vs confirmed buyers.
+        if getattr(user, "account_type", "unknown") == "unknown":
+            from app.ml.classification.classifier import UNKNOWN_SCORE_MULTIPLIER
+            final_s = round(final_s * UNKNOWN_SCORE_MULTIPLIER, 4)
+            reasons = list(reasons) + [
+                "⚠ Account type unclassified — score reduced 25% pending review"
+            ]
+
         # Supplementary product-level alignment score (does not affect final_score)
         product_ocean_s: float | None = None
         if product_ocean_100 is not None:
@@ -281,11 +290,12 @@ async def run_matching_for_product(db: AsyncSession, product_id: UUID) -> dict:
     )
     await db.flush()
 
-    # ── 4. Load all OCEAN-scored users ────────────────────────────────────────
+    # ── 4. Load all OCEAN-scored, non-excluded users ──────────────────────────
     user_r = await db.execute(
         select(DiscoveredUser).where(
             DiscoveredUser.product_id == product_id,
-            DiscoveredUser.ocean_scored == True,   # noqa: E712
+            DiscoveredUser.ocean_scored == True,        # noqa: E712
+            DiscoveredUser.pipeline_excluded == False,  # noqa: E712  defence-in-depth
         )
     )
     users = list(user_r.scalars().all())

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useLeads } from '@/lib/hooks/useLeads';
-import { useDiscoveryJobs } from '@/lib/hooks/useDiscovery';
+import { usePlatformStats } from '@/lib/hooks/useDiscovery';
 import { Pagination } from '@/components/shared/Pagination';
 import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
@@ -38,21 +38,16 @@ export default function DiscoveryPage({ params }: { params: { id: string } }) {
   const [platformFilter, setPlatformFilter] = useState('');
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
 
-  const { data: jobs } = useDiscoveryJobs(id);
+  const { data: platformStats } = usePlatformStats(id);
   const { data, isLoading, isError, refetch } = useLeads(id, {
     page,
     page_size: 10,
     sort: 'top',
   });
 
-  // Provider counts fully dynamic from discovery jobs
-  const providerCounts: Record<string, number> = {};
-  (jobs ?? []).forEach(j => {
-    if (j.status === 'completed' && j.provider_name) {
-      providerCounts[j.provider_name] = (providerCounts[j.provider_name] ?? 0) + j.users_discovered;
-    }
-  });
-  const totalDiscovered = Object.values(providerCounts).reduce((a, b) => a + b, 0);
+  // Per-platform counts from DiscoveredUser table — accurate even for multi-provider jobs
+  const activePlatforms = (platformStats ?? []).filter(s => s.count > 0);
+  const totalDiscovered = activePlatforms.reduce((a, b) => a + b.count, 0);
 
   const filtered = platformFilter
     ? (data?.leads ?? []).filter(l => l.platform.toLowerCase() === platformFilter)
@@ -79,19 +74,19 @@ export default function DiscoveryPage({ params }: { params: { id: string } }) {
           >
             All
           </button>
-          {Object.entries(providerCounts).map(([provider, count]) => {
-            const active = platformFilter === provider;
-            const brandColor = getProviderColor(provider);
+          {activePlatforms.map(({ platform, count }) => {
+            const active = platformFilter === platform;
+            const brandColor = getProviderColor(platform);
             return (
               <button
-                key={provider}
-                onClick={() => setPlatformFilter(active ? '' : provider)}
+                key={platform}
+                onClick={() => setPlatformFilter(active ? '' : platform)}
                 style={active ? { backgroundColor: brandColor, color: '#fff', borderColor: brandColor } : { borderColor: brandColor, color: brandColor }}
                 className={`px-3 py-1.5 rounded-full text-xs font-semibold transition border ${
                   active ? '' : 'bg-white hover:opacity-80'
                 }`}
               >
-                {provider.charAt(0).toUpperCase() + provider.slice(1)} {count}
+                {platform.charAt(0).toUpperCase() + platform.slice(1)} {count}
               </button>
             );
           })}

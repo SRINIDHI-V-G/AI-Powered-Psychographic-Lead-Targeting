@@ -38,7 +38,7 @@ from app.routers import similar_products
 
 logger = logging.getLogger(__name__)
 
-_EXPECTED_REVISION = "b2c3d4e5f6a7"
+_EXPECTED_REVISION = "f3e4d5c6b7a8"
 
 
 async def _discovery_watchdog() -> None:

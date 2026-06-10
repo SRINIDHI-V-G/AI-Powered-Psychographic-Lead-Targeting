@@ -16,7 +16,9 @@ Paths
 """
 from __future__ import annotations
 
+import json
 import logging
+import re
 import traceback
 from uuid import UUID
 
@@ -241,6 +243,12 @@ async def generate_motivations_background(
             )
             await _persist_categories(db, product.id, categories)
 
+            # ── 3b. Generate keywords via LLM ────────────────────────────────
+            keywords = await _generate_keywords(product, _log)
+            if keywords:
+                product.keywords = keywords
+                logger.info("%s generated %d keywords", _log, len(keywords))
+
             # ── 4. Mark done ──────────────────────────────────────────────────
             product.status = ProductStatus.motivations_generated
             product.pipeline_step = 2
@@ -342,3 +350,71 @@ async def _run_llm(product: Product, _log: str) -> tuple[list[dict], str]:
         "Ollama returned unparseable output after 2 attempts and "
         "FALLBACK_TO_MOCK_ON_ERROR is False."
     )
+
+
+# ── Keyword generation ────────────────────────────────────────────────────────
+
+_KW_SYSTEM = "You are a digital marketing expert. Return only valid JSON arrays. No explanation."
+
+_KW_PROMPT_TEMPLATE = """\
+Generate 12 search keywords for finding potential buyers of this product on social media.
+
+Product: {name}
+Category: {category}
+Description: {description}
+Price Range: {price_range}
+
+Focus on: buyer intent, interest topics, lifestyle signals, problems the product solves.
+Return ONLY a JSON array of lowercase strings: ["keyword1", "keyword2", ...]"""
+
+
+async def _generate_keywords(product: "Product", _log: str) -> list[str]:
+    prompt = _KW_PROMPT_TEMPLATE.format(
+        name=product.name,
+        category=product.category,
+        description=product.description,
+        price_range=product.price_range.value,
+    )
+    try:
+        client = get_llm_client()
+        raw = await client.generate(
+            prompt=prompt,
+            system=_KW_SYSTEM,
+            num_predict=300,
+            num_ctx=1024,
+            temperature=0.4,
+        )
+        m = re.search(r"\[.*?\]", raw, re.DOTALL)
+        if m:
+            parsed = json.loads(m.group())
+            if isinstance(parsed, list) and parsed:
+                return [str(k).strip().lower() for k in parsed if k][:15]
+    except Exception as exc:
+        logger.warning("%s keyword generation failed (%s) — using fallback", _log, exc)
+    return _fallback_keywords(product)
+
+
+_STOP_WORDS = {
+    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+    "of", "with", "by", "from", "is", "are", "was", "were", "be", "been",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "that", "this", "it", "its", "our", "your",
+    "their", "we", "you", "they", "i", "my", "me", "us", "as", "if",
+    "not", "no", "so", "up", "out", "all", "also", "more", "than", "just",
+    "can", "use", "used", "using", "new", "any", "one", "two", "get",
+}
+
+
+def _fallback_keywords(product: "Product") -> list[str]:
+    text = f"{product.name} {product.category} {product.description}"
+    words = re.findall(r"\b[a-zA-Z]{3,}\b", text)
+    seen: set[str] = set()
+    kw: list[str] = []
+    for w in words:
+        w_lower = w.lower()
+        if w_lower not in _STOP_WORDS and w_lower not in seen:
+            seen.add(w_lower)
+            kw.append(w_lower)
+        if len(kw) >= 12:
+            break
+    return kw

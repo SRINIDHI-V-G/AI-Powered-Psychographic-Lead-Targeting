@@ -16,6 +16,7 @@ from datetime import datetime
 from sqlalchemy import (
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -151,6 +152,15 @@ class DiscoveredUser(Base):
     nlp_processed: Mapped[bool] = mapped_column(Boolean, default=False)
     ocean_scored: Mapped[bool] = mapped_column(Boolean, default=False)
     matched: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Account-type classification (set by classification_service after content collection)
+    # buyer | enthusiast | community | creator | business | store | competitor | unknown
+    account_type: Mapped[str] = mapped_column(String(20), default="unknown", nullable=False)
+    account_type_confidence: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    account_type_signals: Mapped[list] = mapped_column(JSONB, default=list)
+    # True for business/store/competitor — NLP, OCEAN, matching skip these rows
+    pipeline_excluded: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    exclusion_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

@@ -2,6 +2,7 @@ import apiClient from './client';
 import type {
   DiscoveryJob,
   DiscoveredUsersResponse,
+  PlatformBreakdown,
   UserContent,
   ProviderStatus,
 } from '../types/api';
@@ -56,6 +57,13 @@ export async function getUserContent(
 ): Promise<UserContent[]> {
   const { data } = await apiClient.get<UserContent[]>(
     `/products/${productId}/discovery/users/${userId}/content`
+  );
+  return data;
+}
+
+export async function getPlatformStats(productId: string): Promise<PlatformBreakdown[]> {
+  const { data } = await apiClient.get<PlatformBreakdown[]>(
+    `/products/${productId}/discovery/platform-stats`
   );
   return data;
 }

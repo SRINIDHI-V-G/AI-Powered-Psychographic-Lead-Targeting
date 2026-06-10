@@ -255,7 +255,7 @@ async def generate_handles_background(product_id: str) -> None:
             summary = await run_handle_discovery_for_product(db, UUID(product_id))
 
             product.status = ProductStatus.completed
-            product.pipeline_step = 10
+            # pipeline_step stays at 9 (ranked) — handle generation is transparent to the user
             await db.commit()
 
             logger.info(

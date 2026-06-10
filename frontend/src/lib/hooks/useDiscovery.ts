@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   getDiscoveryJobs,
   getDiscoveredUsers,
+  getPlatformStats,
   getUserContent,
   startDiscovery,
   getProviderStatus,
@@ -65,6 +66,15 @@ export function useUserOcean(productId: string, userId: string) {
     queryFn: () => getUserOcean(productId, userId),
     enabled: Boolean(productId) && Boolean(userId),
     staleTime: 60000,
+  });
+}
+
+export function usePlatformStats(productId: string) {
+  return useQuery({
+    queryKey: ['platform-stats', productId],
+    queryFn: () => getPlatformStats(productId),
+    enabled: Boolean(productId),
+    staleTime: 10000,
   });
 }
 

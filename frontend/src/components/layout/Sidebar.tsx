@@ -31,8 +31,14 @@ export function Sidebar() {
   const pathname = usePathname();
   const { data: dashboard } = useDashboard();
 
-  // Use max pipeline step across active products
-  const maxStep = dashboard?.products.reduce((acc, p) => Math.max(acc, p.pipeline_step), 0) ?? 0;
+  // On product detail pages the ProductSidebar already shows pipeline status — hide it here
+  const onProductDetailPage = /^\/products\/[^/]+/.test(pathname);
+
+  // Use max pipeline step across active products (capped at stage count)
+  const maxStep = Math.min(
+    dashboard?.products.reduce((acc, p) => Math.max(acc, p.pipeline_step), 0) ?? 0,
+    pipelineStages.length,
+  );
 
   return (
     <aside className="w-56 bg-white border-r border-slate-200 flex flex-col shrink-0 overflow-y-auto">
@@ -57,41 +63,43 @@ export function Sidebar() {
         })}
       </nav>
 
-      <div className="px-3 py-4 border-t border-slate-100">
-        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">
-          Pipeline Status
-        </p>
-        <ul className="space-y-1.5">
-          {pipelineStages.map((stage, i) => {
-            const done = maxStep > i;
-            const active = maxStep === i + 1;
-            return (
-              <li key={stage} className="flex items-center gap-2">
-                {done ? (
-                  <CheckCircle2 size={14} className="text-green-500 shrink-0" />
-                ) : (
-                  <Circle
-                    size={14}
-                    className={cn('shrink-0', active ? 'text-indigo-500' : 'text-slate-300')}
-                  />
-                )}
-                <span
-                  className={cn(
-                    'text-xs',
-                    done
-                      ? 'text-green-600'
-                      : active
-                      ? 'text-indigo-600 font-medium'
-                      : 'text-slate-400'
+      {!onProductDetailPage && (
+        <div className="px-3 py-4 border-t border-slate-100">
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">
+            Pipeline Status
+          </p>
+          <ul className="space-y-1.5">
+            {pipelineStages.map((stage, i) => {
+              const done = maxStep > i;
+              const active = maxStep === i + 1;
+              return (
+                <li key={stage} className="flex items-center gap-2">
+                  {done ? (
+                    <CheckCircle2 size={14} className="text-green-500 shrink-0" />
+                  ) : (
+                    <Circle
+                      size={14}
+                      className={cn('shrink-0', active ? 'text-indigo-500' : 'text-slate-300')}
+                    />
                   )}
-                >
-                  {stage}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
-      </div>
+                  <span
+                    className={cn(
+                      'text-xs',
+                      done
+                        ? 'text-green-600'
+                        : active
+                        ? 'text-indigo-600 font-medium'
+                        : 'text-slate-400'
+                    )}
+                  >
+                    {stage}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
     </aside>
   );
 }
